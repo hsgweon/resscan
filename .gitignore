@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# ResScan specific outputs (to prevent committing test runs)
+*_homscan.tsv
+*_homscan_MAP.tsv
+*_varscan.tsv
+*_homscan_html/
+*_varscan_html/
+logs/
+tmp/
+resscan_CARD_v*/

@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+# scripts/resscan_aggregate
+import argparse
+import pandas as pd
+import sys
+import time
+from pathlib import Path
+
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    GREY = '\033[90m'
+
+def format_duration(seconds):
+    """Formats a duration in seconds into a human-readable string."""
+    if seconds < 60: return f"{seconds:.2f} seconds"
+    m, s = divmod(seconds, 60)
+    return f"{int(m)} minutes {int(s)} seconds"
+
+def aggregate_and_pivot(report_type, input_path, output_prefix, suffix_map):
+    """Aggregates results, pivots into wide format, and fills gaps with zeros."""
+    pattern = f"**/*{suffix_map[report_type]}"
+    files = [f for f in input_path.glob(pattern) if "tmp" not in f.parts]
+    
+    if not files:
+        print(f"{Colors.WARNING}  - No final {report_type} files found. Skipping.{Colors.ENDC}")
+        return False
+
+    # Metadata columns to keep as fixed keys
+    id_cols = ["AMR_Gene_Family", "ARO", "CARD_Short_Name_Misc", "Gene_Length_bp", "AMR_Gene_Family;ARO"]
+    # Metrics to pivot into wide format (Sample1, Sample2, etc.)
+    metrics = ["Read_Count", "Fragment_Count", "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"]
+
+    all_dfs = []
+    for f in sorted(files):
+        try:
+            df = pd.read_csv(f, sep='\t')
+            df.columns = [c.lstrip('#') for c in df.columns]
+            sample_id = f.name.replace(suffix_map[report_type], "")
+            df['Sample'] = sample_id
+            all_dfs.append(df)
+        except Exception as e:
+            print(f"{Colors.FAIL}Error reading {f.name}: {e}{Colors.ENDC}")
+
+    if not all_dfs: return False
+    
+    # Combine all samples into one long-format table
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+
+    # For each metric, create a pivoted 'Wide' file
+    for metric in metrics:
+        if metric not in combined_df.columns: continue
+        
+        # Pivot: Rows are Gene Metadata, Columns are Samples, Values are the Metric
+        # fill_value=0 ensures detected genes missing in other samples are 0.0
+        pivoted = combined_df.pivot_table(
+            index=id_cols, 
+            columns='Sample', 
+            values=metric, 
+            aggfunc='first',
+            fill_value=0
+        ).reset_index()
+
+        output_file = f"{output_prefix}_{report_type}_{metric}.tsv"
+        pivoted.to_csv(output_file, sep='\t', index=False)
+        print(f"{Colors.GREEN}  - Created: {output_file}{Colors.ENDC}")
+        
+    return True
+
+def main():
+    start_time = time.monotonic()
+    parser = argparse.ArgumentParser(
+        description="resscan aggregate. Pivots ResScan results into sample-column tables with zero-filling.",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("-i", "--input-dir", required=True, help="Parent directory with sample result folders.")
+    parser.add_argument("-o", "--output-prefix", required=True, help="Prefix for output TSV files.")
+    parser.add_argument("--type", choices=['all', 'homscan', 'varscan', 'map'], default='all', help="Report type (Default: all)")
+
+    args = parser.parse_args()
+    input_path = Path(args.input_dir)
+    suffix_map = {'homscan': "_homscan.tsv", 'varscan': "_varscan.tsv", 'map': "_homscan_MAP.tsv"}
+
+    print(f"\n{Colors.BLUE}{Colors.BOLD}--- resscan aggregation (Zero-Filled Wide Format) starting ---{Colors.ENDC}\n")
+
+    types_to_run = ['homscan', 'varscan', 'map'] if args.type == 'all' else [args.type]
+    success_count = 0
+    for t in types_to_run:
+        if aggregate_and_pivot(t, input_path, args.output_prefix, suffix_map):
+            success_count += 1
+
+    print(f"\n{Colors.BLUE}{Colors.BOLD}--- Aggregation finished in {format_duration(time.monotonic()-start_time)} ---{Colors.ENDC}")
+
+if __name__ == "__main__":
+    main()

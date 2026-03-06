@@ -1,0 +1,5 @@
+#sample,fastq_1,fastq_2,fastq_3
+FILE1,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE1_r1.fastq.gz,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE1_r2.fastq.gz
+FILE2,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE2_r1.fastq.gz,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE2_r2.fastq.gz,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE1_r1.fastq.gz
+FILE3,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE3_r1.fastq.gz,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE3_r2.fastq.gz
+FILE4,/data-xfs/xc917132/prj/ResPipe/test_data/fastq/FILE4_r1.fastq.gz
