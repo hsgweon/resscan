@@ -287,6 +287,12 @@ resscan_aggregate -i ./resscan_batch_results -o Project_Summary
 ```
 The aggregator generates separate pivoted TSV files for each metric (e.g., Project_Summary_homscan_RPK.tsv). These tables use Sample IDs as columns and Gene metadata as rows. Missing values (genes not detected in a sample) are automatically filled with 0.
 
+You can remove test generated files:
+```bash
+rm -rf test_run*
+```
+
+
 **Output Data:**
 
 The aggregator generates pivoted TSV files for each metric (e.g., `Project_Summary_homscan_RPK.tsv`).
