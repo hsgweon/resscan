@@ -99,9 +99,12 @@ NDM,NDM Metallo-beta-lactamase
 
 ### 2. Run the Curation Tool
 ```bash
+# Backup metadata file just in case!
+cp resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt.backup
+
 resscan_curate_metadata \
     -m resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt \
-    -r curation_rules.csv
+    -r scripts/curation_rules.csv
 ```
 
 ## Quick Start
@@ -109,7 +112,7 @@ resscan_curate_metadata \
 To test your installation and run a basic analysis on paired-end reads using your prepared database and 16 threads. a test data (`test.fastq.gz`) is provided in `test_data` directory. Remember to use the correct PATH (can be either relative or absolute) of your CARD DB you have just built:
 
 ```bash
-resscan -i test.fastq.gz \
+resscan -i test_data/test.fastq.gz \
         -o test_run \
         -t 16 \
         --card-db-dir resscan_CARD_v4.0.1
@@ -272,7 +275,7 @@ SampleC,/data/C_SE.fq.gz
 **3. Run Command:**
 ```bash
 # Run 4 samples in parallel (-p), using 4 threads per sample (-t)
-resscan_batch -s samplesheet.csv --card-db-dir ./resscan_db -p 4 -t 4 --overwrite
+resscan_batch -s test_data/samplesheet.csv --card-db-dir ./resscan_CARD_v4.0.1 -o test_run_batch -p 4 -t 4
 ```
 
 ### 2. Result Aggregation (resscan_aggregate)

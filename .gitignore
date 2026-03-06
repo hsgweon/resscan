@@ -36,3 +36,8 @@ wheels/
 logs/
 tmp/
 resscan_CARD_v*/
+
+# Database
+broadstreet-*
+CARD_raw_*
+resscan_CARD_*
