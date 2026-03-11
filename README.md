@@ -289,7 +289,6 @@ Additional Batch Options:
 | Flag | Description |
 | :--- | :--- |
 | --dry_run | Test the pipeline logic (sleeps 2s per sample) without running ResScan. |
-| --overwrite | Purges the output directory if it already exists. |
 | --cleanup | Deletes the Nextflow work/ directory upon a successful run to save disk space. |
 | --args | Pass extra flags to the core ResScan tool (e.g., --args "--min-id 0.98"). |
 
@@ -298,9 +297,14 @@ Additional Batch Options:
 Once batch processing is complete, use the aggregator to consolidate individual sample results into wide-format matrices suitable for downstream statistical analysis in R or Python.
 
 ```bash
-# Aggregate all types (homscan, varscan, map) by default
-resscan_aggregate -i ./resscan_batch_results -o Project_Summary
+# Aggregate all result types (homscan, varscan, map) into a new directory
+resscan_aggregate -i ./resscan_batch_results -o Project_Summary -p Project_Summary
 ```
+
+- `i`: The parent directory containing all individual sample folders.
+- `o`: The output directory where the aggregated tables will be saved (created automatically).
+- `p`: (Optional) A prefix for the filenames (Default: aggregated).
+
 The aggregator generates separate pivoted TSV files for each metric (e.g., Project_Summary_homscan_RPK.tsv). These tables use Sample IDs as columns and Gene metadata as rows. Missing values (genes not detected in a sample) are automatically filled with 0.
 
 **Output Data:**

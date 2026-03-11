@@ -5,6 +5,7 @@ import argparse
 import pandas as pd
 import sys
 import time
+import os
 from pathlib import Path
 
 class Colors:
@@ -24,7 +25,7 @@ def format_duration(seconds):
     m, s = divmod(seconds, 60)
     return f"{int(m)} minutes {int(s)} seconds"
 
-def aggregate_and_pivot(report_type, input_path, output_prefix, suffix_map):
+def aggregate_and_pivot(report_type, input_path, output_dir, output_prefix, suffix_map):
     """Aggregates results, pivots into wide format, and fills gaps with zeros."""
     pattern = f"**/*{suffix_map[report_type]}"
     files = [f for f in input_path.glob(pattern) if "tmp" not in f.parts]
@@ -42,14 +43,23 @@ def aggregate_and_pivot(report_type, input_path, output_prefix, suffix_map):
     for f in sorted(files):
         try:
             df = pd.read_csv(f, sep='\t')
-            df.columns = [c.lstrip('#') for c in df.columns]
+            # Clean up potential '#' from header comments
+            df.columns = [c.lstrip('#').strip() for c in df.columns]
+            
+            # Ensure required columns exist before proceeding
+            missing_ids = [c for c in id_cols if c not in df.columns]
+            if missing_ids:
+                continue
+
             sample_id = f.name.replace(suffix_map[report_type], "")
             df['Sample'] = sample_id
             all_dfs.append(df)
         except Exception as e:
             print(f"{Colors.FAIL}Error reading {f.name}: {e}{Colors.ENDC}")
 
-    if not all_dfs: return False
+    if not all_dfs: 
+        print(f"{Colors.WARNING}  - No valid data extracted for {report_type}.{Colors.ENDC}")
+        return False
     
     # Combine all samples into one long-format table
     combined_df = pd.concat(all_dfs, ignore_index=True)
@@ -59,7 +69,6 @@ def aggregate_and_pivot(report_type, input_path, output_prefix, suffix_map):
         if metric not in combined_df.columns: continue
         
         # Pivot: Rows are Gene Metadata, Columns are Samples, Values are the Metric
-        # fill_value=0 ensures detected genes missing in other samples are 0.0
         pivoted = combined_df.pivot_table(
             index=id_cols, 
             columns='Sample', 
@@ -68,7 +77,10 @@ def aggregate_and_pivot(report_type, input_path, output_prefix, suffix_map):
             fill_value=0
         ).reset_index()
 
-        output_file = f"{output_prefix}_{report_type}_{metric}.tsv"
+        # Construct path: output_dir / prefix_type_metric.tsv
+        filename = f"{output_prefix}_{report_type}_{metric}.tsv"
+        output_file = output_dir / filename
+        
         pivoted.to_csv(output_file, sep='\t', index=False)
         print(f"{Colors.GREEN}  - Created: {output_file}{Colors.ENDC}")
         
@@ -81,20 +93,33 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("-i", "--input-dir", required=True, help="Parent directory with sample result folders.")
-    parser.add_argument("-o", "--output-prefix", required=True, help="Prefix for output TSV files.")
+    parser.add_argument("-o", "--output-dir", required=True, help="Directory to save the aggregated results.")
+    parser.add_argument("-p", "--prefix", default="aggregated", help="Prefix for output filenames (Default: aggregated)")
     parser.add_argument("--type", choices=['all', 'homscan', 'varscan', 'map'], default='all', help="Report type (Default: all)")
 
     args = parser.parse_args()
     input_path = Path(args.input_dir)
-    suffix_map = {'homscan': "_homscan.tsv", 'varscan': "_varscan.tsv", 'map': "_homscan_MAP.tsv"}
+    output_path = Path(args.output_dir)
+    
+    # Create output directory if it doesn't exist
+    if not output_path.exists():
+        print(f"{Colors.CYAN}Creating output directory: {args.output_dir}{Colors.ENDC}")
+        output_path.mkdir(parents=True, exist_ok=True)
+
+    suffix_map = {
+        'homscan': "_homscan.tsv", 
+        'varscan': "_varscan.tsv", 
+        'map': "_homscan_MAP.tsv"
+    }
 
     print(f"\n{Colors.BLUE}{Colors.BOLD}--- resscan aggregation (Zero-Filled Wide Format) starting ---{Colors.ENDC}\n")
+    print(f"{Colors.GREY}Input:  {input_path.absolute()}")
+    print(f"Output: {output_path.absolute()}{Colors.ENDC}\n")
 
     types_to_run = ['homscan', 'varscan', 'map'] if args.type == 'all' else [args.type]
-    success_count = 0
+    
     for t in types_to_run:
-        if aggregate_and_pivot(t, input_path, args.output_prefix, suffix_map):
-            success_count += 1
+        aggregate_and_pivot(t, input_path, output_path, args.prefix, suffix_map)
 
     print(f"\n{Colors.BLUE}{Colors.BOLD}--- Aggregation finished in {format_duration(time.monotonic()-start_time)} ---{Colors.ENDC}")
 

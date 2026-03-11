@@ -8,7 +8,6 @@ params.card         = ""
 params.out          = "resscan_batch_results"
 params.parallel     = 1                     
 params.threads      = 8
-params.overwrite    = false
 params.args         = ""
 params.dry_run      = false
 params.email        = ""
@@ -25,11 +24,8 @@ def validateInputs() {
     }
     
     def outDir = file(params.out)
-    if ( outDir.exists() && !params.overwrite ) {
-        error "\033[91mERROR: Output directory '${params.out}' exists. Use --overwrite to purge it.\033[0m"
-    } else if ( outDir.exists() && params.overwrite ) {
-        println "\033[93mOverwriting: Removing existing directory '${params.out}'...\033[0m"
-        outDir.deleteDir()
+    if ( !outDir.exists() ) {
+        outDir.mkdir()
     }
 }
 
