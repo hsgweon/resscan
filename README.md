@@ -18,7 +18,7 @@ The pipeline normalises results against universal single-copy genes (USCGs) and 
 -   **Prior-Guided Analysis:** Allows the incorporation of external knowledge (e.g., clinical prevalence data) via a user-provided priors file to improve the accuracy of the MAP resolution.
 -   **Interactive Visualisations:** Automatically generates detailed HTML reports for each AMR gene family, showing read coverage, identity, and uniqueness.
 -   **Safe & Smart Reruns:** Protects against accidental overwrites and allows for efficient re-analysis by skipping the time-consuming mapping step.
--   **Batch Processing:** Includes parallel execution capabilities to process multiple samples simultaneously via a simple samplesheet.
+-   **Batch Processing:** Includes Nextflow-based parallel execution capabilities to process multiple samples simultaneously via a simple samplesheet.
 -   **Result Aggregation:** Provides automated tools to pivot results from multiple samples into wide-format, zero-filled tables for downstream statistical analysis.
 -   **Easy Installation:** Packaged for simple installation into a Conda environment.
 
@@ -254,17 +254,19 @@ resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
 ResScan includes high-level wrappers to manage large-scale studies and high-throughput sequencing projects efficiently.
 
 ### 1. Batch Execution (resscan_batch)
-The batch script orchestrates multiple ResScan runs in parallel. It automates directory management, validates input paths before execution, and handles variable library types within a single run.
+The `resscan_batch` script is a standalone Nextflow-powered orchestrator. It is designed to handle hundreds of samples with robust error recovery, parallel execution, and automated resource management, bypassing the limitations of standard Python multiprocessing.
 
-**1. Key Features:**
--   **Pre-flight Validation:** Automatically verifies that every FASTQ file path in your samplesheet exists before starting the pipeline.
--   **Variable Input Support:** Handles "ragged" CSVs where samples can have a different number of FASTQ files (e.g., mixing single-end, paired-end, and technical replicates).
--   **Resource Management:** Controls both the number of concurrent samples `(-p)` and the threads allocated to each sample `(-t)`.
+**Key Features:**
+-   **Nextflow Orchestration:** Operates as a dataflow-driven pipeline, ensuring that 100+ samples are processed without the "stalling" issues common in standard Python pools.
+-   **Pre-flight Validation:** Automatically verifies every FASTQ path exists and checks for duplicate Sample IDs in your samplesheet before any analysis begins.
+-   **Smart Resumption:** If a run is interrupted, simply add -resume (single dash) to the command. ResScan will skip successfully completed samples and only process the remaining ones.
+-   **Variable Input Support:** Handles "ragged" CSVs where samples have a different number of FASTQ files (e.g., mixing single-end, paired-end, and technical replicates).
+-   **Automatic Cleanup & Notifications:** Optional flags allow for automatic deletion of intermediate work/ directories and email notifications upon completion.
 
 
-**2. Samplesheet Format (samplesheet.csv)**
+**Samplesheet Format (`samplesheet.csv`)**
 
-The samplesheet is a CSV file. The first column must be the sample ID. Subsequent columns contain the full paths to FASTQ files.
+The samplesheet is a CSV file. The first column must be named `sample`. Subsequent columns contain paths to FASTQ files.
 ```tsv
 #sample,fastq_1,fastq_2,fastq_3
 SampleA,/data/A_R1.fq.gz,/data/A_R2.fq.gz
@@ -272,11 +274,25 @@ SampleB,/data/B_R1.fq.gz,/data/B_R2.fq.gz,/data/B_R1_L002.fq.gz
 SampleC,/data/C_SE.fq.gz
 ```
 
-**3. Run Command:**
+**Run Command:**
 ```bash
-# Run 4 samples in parallel (-p), using 4 threads per sample (-t)
-resscan_batch -s test_data/samplesheet.csv --card-db-dir ./resscan_CARD_v4.0.1 -o test_run_batch -p 4 -t 4
+# Run 15 samples in parallel, using 8 threads per sample
+./resscan_batch \
+    --samplesheet data/samplesheet.csv \
+    --card resscan_CARD_v4.0.1 \
+    --out project_results \
+    --parallel 15 \
+    --threads 8
 ```
+
+Additional Batch Options:
+| Flag | Description |
+| :--- | :--- |
+| --dry_run | Test the pipeline logic (sleeps 2s per sample) without running ResScan. |
+| --overwrite | Purges the output directory if it already exists. |
+| --cleanup | Deletes the Nextflow work/ directory upon a successful run to save disk space. |
+| --args | Pass extra flags to the core ResScan tool (e.g., --args "--min-id 0.98"). |
+
 
 ### 2. Result Aggregation (resscan_aggregate)
 Once batch processing is complete, use the aggregator to consolidate individual sample results into wide-format matrices suitable for downstream statistical analysis in R or Python.
@@ -287,12 +303,6 @@ resscan_aggregate -i ./resscan_batch_results -o Project_Summary
 ```
 The aggregator generates separate pivoted TSV files for each metric (e.g., Project_Summary_homscan_RPK.tsv). These tables use Sample IDs as columns and Gene metadata as rows. Missing values (genes not detected in a sample) are automatically filled with 0.
 
-You can remove test generated files:
-```bash
-rm -rf test_run*
-```
-
-
 **Output Data:**
 
 The aggregator generates pivoted TSV files for each metric (e.g., `Project_Summary_homscan_RPK.tsv`).
@@ -302,8 +312,29 @@ The aggregator generates pivoted TSV files for each metric (e.g., `Project_Summa
 - Values: Normalised metrics (RPK, TPM, or Depth).
 - Fill: Missing values (genes not detected) are automatically filled with 0.
 
-### 3. HPC and Workflow Orchestration
-While `resscan_batch` is a robust solution for local workstations and small-to-medium servers, it operates as a linear Python-based orchestrator.
+### 3. Post-Run Housekeeping
+
+After a batch run has completed successfully and you have verified your results in the output directory, you can safely remove the temporary files generated by Nextflow to reclaim disk space.
+
+Note: Deleting these files will remove the "checkpoint" data, meaning you will not be able to use the -resume feature for that specific run.
+
+**Manual Cleanup**
+
+You can delete the hidden Nextflow metadata and the intermediate work/ directory using the following command:
+```bash
+# Safely remove Nextflow hidden files and the intermediate work directory
+rm -rf .nextflow* work/
+```
+
+**Automated Cleanup**
+If you want the pipeline to handle this automatically upon success, you can use the `--cleanup` flag when running the script:
+```bash
+# Safely remove Nextflow hidden files and the intermediate work directory
+resscan_batch --samplesheet data.csv --card ./db --cleanup
+```
+
+### 4. HPC and Workflow Orchestration
+Because `resscan_batch` is built on Nextflow, it is natively compatible with HPC schedulers (Slurm, SGE, LSF) and Cloud environments. While the default configuration runs locally, the script can be scaled to thousands of samples across a distributed cluster by defining a Nextflow profile.
 
 **For Bioinformaticians & HPC Users:**
 For massive-scale datasets (thousands of samples) or execution on High-Performance Computing (HPC) clusters using schedulers like SLURM or SGE, we recommend wrapping the core resscan command in a workflow manager such as Nextflow or Snakemake. This provides superior error recovery (check-pointing), containerisation (Docker/Singularity), and cloud-native scaling.

@@ -1,190 +1,129 @@
-#!/usr/bin/env python3
+#!/usr/bin/env nextflow
 
-# scripts/resscan_batch
-import argparse
-import pandas as pd
-import subprocess
-import sys
-import time
-import io
-import shlex
-import multiprocessing
-import shutil
-from pathlib import Path
-from collections import Counter
+nextflow.enable.dsl = 2
 
-class Colors:
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
+// 1. Parameter Definitions
+params.samplesheet  = "samplesheet.csv"
+params.card         = ""
+params.out          = "resscan_batch_results"
+params.parallel     = 1                     
+params.threads      = 8
+params.overwrite    = false
+params.args         = ""
+params.dry_run      = false
+params.email        = ""
+params.cleanup      = false
 
-def format_duration(seconds):
-    if seconds < 60: return f"{seconds:.2f} seconds"
-    m, s = divmod(seconds, 60)
-    return f"{int(m)} minutes {int(s)} seconds"
-
-def run_worker(task_info):
-    """Standalone worker function for resscan execution."""
-    sid, fqs, args_dict, pass_through_flags = task_info
-    
-    clean_sample_id = str(sid).strip().replace(" ", "_")
-    output_subdir = Path(args_dict['output_dir']) / clean_sample_id
-    output_subdir.mkdir(parents=True, exist_ok=True)
-    
-    output_prefix = output_subdir / f"{clean_sample_id}_results"
-    
-    # Constructing the command
-    cmd = [
-        "resscan",
-        "-i", ",".join(fqs),
-        "-o", str(output_prefix),
-        "--card-db-dir", args_dict['card_db_dir'],
-        "-t", str(args_dict['threads_per_sample'])
-    ]
-    cmd.extend(pass_through_flags)
-    
-    start_time_unix = time.time()
-    
-    try:
-        # Redirecting to DEVNULL to avoid pipe-buffer deadlocks
-        subprocess.run(
-            cmd, 
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL, 
-            check=True
-        )
-        status = "SUCCESS"
-    except Exception:
-        status = "FAILED"
-    
-    return {
-        "sample": sid,
-        "status": status,
-        "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time_unix)),
-        "duration": format_duration(time.time() - start_time_unix),
-        "command": " ".join(map(shlex.quote, cmd)),
-        "files": fqs
+def validateInputs() {
+    def sSheet = file(params.samplesheet)
+    if ( !sSheet.exists() ) {
+        error "\033[91mERROR: Samplesheet '${params.samplesheet}' not found.\033[0m"
     }
 
-def main():
-    # Use 'spawn' to prevent inconsistent stalls/deadlocks on Linux
-    try:
-        multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass
-
-    total_start_time = time.monotonic()
+    if ( !params.card && !params.dry_run ) { 
+        error "\033[91mERROR: Please provide the CARD database path using --card\033[0m" 
+    }
     
-    parser = argparse.ArgumentParser(description="resscan batch pipeline with real-time logging.")
-    parser.add_argument("-s", "--samplesheet", required=True, help="Path to samplesheet CSV.")
-    parser.add_argument("--card-db-dir", required=True, help="CARD database directory.")
-    parser.add_argument("-o", "--output-dir", default="resscan_batch_results", help="Output directory.")
-    parser.add_argument("--overwrite", action="store_true", help="Delete and recreate output directory.")
-    parser.add_argument("-p", "--parallel-samples", type=int, default=1, help="Simultaneous samples.")
-    parser.add_argument("-t", "--threads-per-sample", type=int, default=8, help="Threads per sample.")
-    
-    args, pass_through_flags = parser.parse_known_args()
-    output_path = Path(args.output_dir)
+    def outDir = file(params.out)
+    if ( outDir.exists() && !params.overwrite ) {
+        error "\033[91mERROR: Output directory '${params.out}' exists. Use --overwrite to purge it.\033[0m"
+    } else if ( outDir.exists() && params.overwrite ) {
+        println "\033[93mOverwriting: Removing existing directory '${params.out}'...\033[0m"
+        outDir.deleteDir()
+    }
+}
 
-    # 1. Output Directory Handling
-    if output_path.exists():
-        if args.overwrite:
-            print(f"{Colors.WARNING}Overwriting: Removing existing directory '{args.output_dir}'...{Colors.ENDC}")
-            try:
-                shutil.rmtree(output_path)
-                time.sleep(0.5) # Filesystem sync pause
-            except Exception as e:
-                print(f"{Colors.FAIL}Error removing directory: {e}{Colors.ENDC}")
-                sys.exit(1)
-        else:
-            print(f"{Colors.FAIL}ERROR: Output directory '{args.output_dir}' already exists.{Colors.ENDC}")
-            print(f"{Colors.WARNING}Use --overwrite to delete and recreate it.{Colors.ENDC}")
-            sys.exit(1)
-    
-    output_path.mkdir(parents=True, exist_ok=True)
+process RESSCAN {
+    maxForks params.parallel
+    publishDir "${params.out}/${sample_id}", mode: 'copy'
+    cpus params.threads
+    tag "${sample_id}"
 
-    # 2. Load and Validate Samplesheet
-    try:
-        with open(args.samplesheet, 'r') as f:
-            lines = [line.strip() for line in f if line.strip()]
-        if not lines: raise ValueError("Samplesheet is empty.")
-        if lines[0].startswith('#'): lines[0] = lines[0].lstrip('#').strip()
-        
-        df = pd.read_csv(io.StringIO("\n".join(lines)), engine='python')
-        if 'sample' not in df.columns:
-            raise ValueError("Samplesheet must contain a 'sample' column.")
-            
-        fastq_cols = [c for c in df.columns if c != 'sample']
-    except Exception as e:
-        print(f"{Colors.FAIL}Samplesheet Error: {e}{Colors.ENDC}")
-        sys.exit(1)
+    input:
+    tuple val(sample_id), path(fastqs)
 
-    # 3. Validation for Duplicates
-    sample_ids = df['sample'].astype(str).str.strip()
-    sample_counts = Counter(sample_ids)
-    dup_samples = [s for s, count in sample_counts.items() if count > 1]
-    
-    all_fqs = []
-    tasks = []
-    for _, row in df.iterrows():
-        sid = str(row['sample']).strip()
-        fqs = [str(row[col]).strip() for col in fastq_cols if pd.notna(row[col]) and str(row[col]).strip()]
-        if fqs:
-            all_fqs.extend(fqs)
-            tasks.append((sid, fqs, vars(args), pass_through_flags))
+    output:
+    tuple val(sample_id), val(cmd_str), path("${sample_id}_results*"), val(mode_label)
 
-    fq_counts = Counter(all_fqs)
-    dup_fqs = [f for f, count in fq_counts.items() if count > 1]
+    script:
+    def input_str = fastqs.join(',')
+    if ( params.dry_run ) {
+        mode_label = "DRY_RUN"
+        cmd_str = "sleep 2"
+        """
+        echo "Dry run for ${sample_id}"
+        sleep 2
+        touch ${sample_id}_results_DRYRUN.txt
+        """
+    } else {
+        mode_label = "LIVE"
+        cmd_str = "resscan -i ${input_str} -o ${sample_id}_results --card-db-dir ${params.card} -t ${task.cpus} ${params.args}"
+        """
+        ${cmd_str}
+        """
+    }
+}
 
-    if dup_samples or dup_fqs:
-        print(f"{Colors.FAIL}{Colors.BOLD}--- Validation Failed ---{Colors.ENDC}")
-        if dup_samples:
-            print(f"{Colors.WARNING}Duplicate Sample IDs: {', '.join(dup_samples)}{Colors.ENDC}")
-        if dup_fqs:
-            print(f"{Colors.WARNING}Duplicate FASTQ files: {', '.join(dup_fqs)}{Colors.ENDC}")
-        sys.exit(1)
+workflow {
+    validateInputs()
 
-    # 4. Execution and Real-Time Logging
-    total_tasks = len(tasks)
-    print(f"{Colors.BLUE}{Colors.BOLD}--- Processing {total_tasks} samples ---{Colors.ENDC}\n")
-    
-    master_log_path = output_path / "batch_run.log"
-    
-    # Initialise log file with header
-    with open(master_log_path, "w") as log:
-        log.write(f"RESSCAN BATCH LOG SUMMARY\n{'='*25}\n")
-        log.write(f"Total Samples: {total_tasks}\n")
-        log.write(f"Run Started:   {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    // 2. Load Samplesheet
+    ch_raw = Channel.fromPath(params.samplesheet)
+        .splitCsv(header: true)
+        .map { row -> 
+            if (!row.sample) { error "Samplesheet missing 'sample' column" }
+            def sid = row.sample.trim()
+            def fqs = row.findAll { k, v -> k != 'sample' && v != null && v != "" }.values().collect { file(it) }
+            return tuple(sid, fqs)
+        }
 
-    completed_count = 0
-    with multiprocessing.Pool(processes=args.parallel_samples) as pool:
-        for result in pool.imap_unordered(run_worker, tasks):
-            completed_count += 1
-            
-            # Terminal output with progress counter
-            status_color = Colors.GREEN if result["status"] == "SUCCESS" else Colors.FAIL
-            progress_str = f"[{completed_count}/{total_tasks}]"
-            print(f"{status_color}[{result['status']}]{Colors.ENDC} {result['sample']} {Colors.CYAN}{progress_str}{Colors.ENDC} ({result['duration']})")
-            
-            # Append to master log in real-time
-            with open(master_log_path, "a") as log:
-                log.write(f"SAMPLE:  {result['sample']}\n")
-                log.write(f"STATUS:  {result['status']}\n")
-                log.write(f"TIME:    {result['start_time']} ({result['duration']})\n")
-                log.write(f"CMD:     {result['command']}\n")
-                log.write(f"FILES:   {', '.join(result['files'])}\n")
-                log.write("-" * 25 + "\n")
-                log.flush()
+    // 3. Duplicate Validation
+    ch_raw
+        .map { it[0] }
+        .toList()
+        .map { list ->
+            def dups = list.countBy { it }.findAll { it.value > 1 }.keySet()
+            if (dups) {
+                log.error "\n\033[91m[FATAL ERROR] Duplicate Sample IDs detected: ${dups.join(', ')}\033[0m\n"
+                error "Pipeline stopped due to duplicate Sample IDs."
+            }
+            return list
+        }
 
-    # Final summary
-    total_duration = format_duration(time.monotonic() - total_start_time)
-    print(f"\n{Colors.GREEN}{Colors.BOLD}Batch run complete!{Colors.ENDC}")
-    print(f"{Colors.BLUE}Total Runtime: {total_duration}{Colors.ENDC}")
-    print(f"{Colors.BLUE}Master Log:    {master_log_path}{Colors.ENDC}")
+    // 4. Execution
+    RESSCAN(ch_raw)
 
-if __name__ == "__main__":
-    main()
+        .collectFile(name: "batch_run.log", storeDir: params.out, sort: true) { sample_id, cmd, results, mode ->
+            "SAMPLE:  $sample_id\nMODE:    $mode\nSTATUS:  SUCCESS\nCMD:     $cmd\n-------------------------\n"
+        }
+}
+
+workflow.onComplete {
+    def msg = """\
+        ResScan Batch Pipeline Report
+        -----------------------------
+        Status:      ${workflow.success ? 'SUCCESS' : 'FAILED'}
+        Duration:    ${workflow.duration}
+        Directory:   ${params.out}
+        Master Log:  ${params.out}/batch_run.log
+        Nextflow:    ${nextflow.version}
+        """.stripIndent()
+
+    if (workflow.success) {
+        println "\033[92m\n--- Batch Run Complete ---"
+        println "Total Duration: ${workflow.duration}"
+        println "Results:        ${params.out}\033[0m"
+
+        // Optional Cleanup
+        if (params.cleanup) {
+            println "Cleaning up work directory..."
+            file("${workflow.launchDir}/work").deleteDir()
+        }
+
+        // Email Notification
+        if (params.email) {
+            println "Sending email to ${params.email}..."
+            sendMail(to: params.email, subject: "ResScan Batch Complete: ${params.out}", body: msg)
+        }
+    }
+}
