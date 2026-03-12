@@ -32,7 +32,8 @@ setuptools.setup(
     scripts=[
         'scripts/resscan_DB_USCG_download.py',
         'scripts/resscan_batch',
-        'scripts/resscan_aggregate'
+        'scripts/resscan_aggregate',
+        'scripts/generate_merged_samplesheet'
     ],
 
     entry_points={

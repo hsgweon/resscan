@@ -202,9 +202,9 @@ def main():
     
     # Performance & Filtering Arguments
     parser.add_argument("-t", "--threads", type=int, default=8, help="Number of threads to use (default: 8).")
-    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.9, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
-    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.9, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
-    parser.add_argument("--consensus-cutoff", type=float, default=0.9, help="Consensus cutoff for homscan family assignment. Default: 0.80")
+    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.95, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.95, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--consensus-cutoff", type=float, default=0.8, help="Consensus cutoff for homscan family assignment. Default: 0.80")
     
     # Gene Type & PID Type Arguments
     parser.add_argument("--homscan-gene-types", default='H', help="Comma-delimited list of gene types for homscan (e.g., 'H,K'). Default: 'H'")
@@ -376,6 +376,7 @@ def main():
     total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
     uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
 
+
     # ==========================================================================
     # HOMSCAN
     # ==========================================================================
@@ -444,7 +445,8 @@ def main():
                     varscan_visualise_cmd = [
                         sys.executable, str(src_dir / "varscan_visualise.py"), "--variant-hits", str(variant_hits),
                         "--variant-alignments", str(variant_alignments), "--metadata", str(db_card_metadata),
-                        "-o", str(varscan_html_dir)
+                        "-o", str(varscan_html_dir),
+                        "--pid-cutoff", str(args.varscan_pid_cutoff)
                     ]
                     if not run_command(varscan_visualise_cmd): sys.exit(1)
                 else:
@@ -453,6 +455,7 @@ def main():
                 logging.warning("Variant hits not found. Skipping rest of varscan.")
         else:
             logging.warning("SAM files from AMR mapping not found or empty. Skipping varscan.")
+
 
     # ==========================================================================
     # HOMSCAN - MAP RESOLUTION
@@ -473,6 +476,7 @@ def main():
         if not run_command(map_resolve_cmd): sys.exit(1)
     else:
         logging.warning(f"Homscan detailed report not found or empty: {homscan_detailed_report}. Skipping MAP resolution.")
+
 
     # ==========================================================================
     # FINAL

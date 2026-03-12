@@ -112,10 +112,11 @@ resscan_curate_metadata \
 To test your installation and run a basic analysis on paired-end reads using your prepared database and 16 threads. a test data (`test.fastq.gz`) is provided in `test_data` directory. Remember to use the correct PATH (can be either relative or absolute) of your CARD DB you have just built:
 
 ```bash
-resscan -i test_data/test.fastq.gz \
+cd test_data
+resscan -i test.fastq.gz \
         -o test_run \
         -t 16 \
-        --card-db-dir resscan_CARD_v4.0.1
+        --card-db-dir ../resscan_CARD_v4.0.1
 ```
 This will create a directory named `test_run` containing all the results. 
 

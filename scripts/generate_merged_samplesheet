@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+
+# scripts/generate_merged_samplesheet
+import os
+import sys
+import argparse
+from collections import defaultdict
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate a headered CSV for the ResScan Nextflow pipeline."
+    )
+    parser.add_argument("--inputdir", required=True, help="Directory with FASTQ files.")
+    parser.add_argument("--samplesheet", required=True, help="List of Sample IDs (one per line).")
+    parser.add_argument("--output", required=True, help="Output CSV filename (e.g., samplesheet.csv).")
+
+    args = parser.parse_args()
+
+    # 1. Load Sample IDs
+    if not os.path.exists(args.samplesheet):
+        print(f"Error: {args.samplesheet} not found.", file=sys.stderr)
+        sys.exit(1)
+    
+    with open(args.samplesheet, 'r') as f:
+        target_ids = [line.strip() for line in f if line.strip()]
+
+    # 2. Scan for FASTQ files
+    if not os.path.isdir(args.inputdir):
+        print(f"Error: {args.inputdir} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    all_files = [f for f in os.listdir(args.inputdir) if f.endswith('.fastq.gz')]
+
+    # 3. Group files by ID
+    groups = defaultdict(list)
+    for f in all_files:
+        for sid in target_ids:
+            if f.startswith(f"{sid}_"):
+                # Store the full path so Nextflow can find the files
+                full_path = os.path.abspath(os.path.join(args.inputdir, f))
+                groups[sid].append(full_path)
+                break
+
+    # 4. Generate CSV with 'sample' header
+    try:
+        with open(args.output, 'w') as out_f:
+            # Create header based on the maximum number of files any sample has
+            max_files = max([len(f_list) for f_list in groups.values()] or [0])
+            header = ["sample"] + [f"file{i+1}" for i in range(max_files)]
+            out_f.write(",".join(header) + "\n")
+
+            for sid in target_ids:
+                files = sorted(groups[sid])
+                if files:
+                    # Pad the row if a sample has fewer files than the max
+                    row = [sid] + files
+                    out_f.write(",".join(row) + "\n")
+                else:
+                    print(f"Warning: No files for {sid}, skipping in CSV.", file=sys.stderr)
+        
+        print(f"Success: {args.output} created with {len(target_ids)} samples.")
+        
+    except IOError as e:
+        print(f"Error writing output: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

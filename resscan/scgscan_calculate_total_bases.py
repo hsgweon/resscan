@@ -6,6 +6,7 @@ import os
 import sys
 import gzip
 import bz2
+import itertools
 
 class BColors:
     """A helper class to add color to terminal output."""
@@ -64,14 +65,12 @@ def main():
             print(BColors.red(f"Error: Input file not found: {filepath}"), file=sys.stderr)
             sys.exit(1)
         
-        print(BColors.cyan(f"--- Processing file: {os.path.basename(filepath)} ---"))
+        print(BColors.cyan(f"--- Processing: {os.path.basename(filepath)} ---"))
         try:
             with open_fastq_file(filepath) as f:
-                line_num = 0
-                for line in f:
-                    line_num += 1
-                    if line_num % 4 == 2:
-                        total_bases += len(line.strip())
+                for line in itertools.islice(f, 1, None, 4):
+                    total_bases += len(line.rstrip())
+                    
         except Exception as e:
             print(BColors.red(f"Error processing file {filepath}: {e}"), file=sys.stderr)
             sys.exit(1)

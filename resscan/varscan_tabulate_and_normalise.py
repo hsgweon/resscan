@@ -169,32 +169,46 @@ def calculate_and_write_summary(read_counts, fragment_sets, aro_to_family, aro_t
             fpkpc_val, fpkpmc_val = "0.0000", "0.00"
 
         results.append({
-            "key": f"{family};{aro}", "Read_Count": r_count, "Fragment_Count": f_count,
+            "family": family,
+            "aro": aro,
+            "Read_Count": r_count, 
+            "Fragment_Count": f_count,
             "Gene_Length_bp": str(gene_length_bp),
             "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val,
             "FPK": f"{fpk:.4f}", "FPKG": f"{fpkg:.4f}", "FPKPC": fpkpc_val, "FPKPMC": fpkpmc_val
         })
     
-    results.sort(key=lambda x: x['key'])
+    results.sort(key=lambda x: (x['family'], x['aro']))
 
     try:
+
         with open(output_path, 'w', newline='') as f:
+
             header = [
-                "#AMR_Gene_Family;ARO", "Read_Count", "Fragment_Count", "Gene_Length_bp", 
+                "AMR_Gene_Family", "ARO", "Read_Count", "Fragment_Count", "Gene_Length_bp", 
                 "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"
             ]
             writer = csv.DictWriter(f, fieldnames=header, delimiter='\t')
             f.write('\t'.join(header) + '\n')
+            
             for row_data in results:
                 row_to_write = {
-                    "#AMR_Gene_Family;ARO": row_data["key"], 
+                    "AMR_Gene_Family": row_data["family"],
+                    "ARO": row_data["aro"],
                     "Read_Count": row_data["Read_Count"],
                     "Fragment_Count": row_data["Fragment_Count"],
                     "Gene_Length_bp": row_data["Gene_Length_bp"], 
-                    "RPK": row_data["RPK"], "RPKG": row_data["RPKG"], "RPKPC": row_data["RPKPC"], "RPKPMC": row_data["RPKPMC"],
-                    "FPK": row_data["FPK"], "FPKG": row_data["FPKG"], "FPKPC": row_data["FPKPC"], "FPKPMC": row_data["FPKPMC"]
+                    "RPK": row_data["RPK"], 
+                    "RPKG": row_data["RPKG"], 
+                    "RPKPC": row_data["RPKPC"], 
+                    "RPKPMC": row_data["RPKPMC"],
+                    "FPK": row_data["FPK"], 
+                    "FPKG": row_data["FPKG"], 
+                    "FPKPC": row_data["FPKPC"], 
+                    "FPKPMC": row_data["FPKPMC"]
                 }
                 writer.writerow(row_to_write)
+
         print(BColors.green(f"--- Successfully wrote report: {output_path} ---"))
     except IOError as e:
         print(BColors.red(f"Error writing report file: {e}"), file=sys.stderr)
@@ -209,13 +223,7 @@ def main():
     parser.add_argument("--total-bases-file", required=True, help="Path to a file containing the total number of bases for RPKG calculation.")
     parser.add_argument("--tmp-dir", default=".", help="Directory to store the output report file. Defaults to the current directory.")
     parser.add_argument("--output-prefix", required=True, help="Prefix for the output summary file (e.g., 'MyProject').")
-    parser.add_argument(
-        "--pid-cutoff",
-        type=float,
-        default=0.95,
-        help="Minimum nucleotide PID to consider a hit (0.0-1.0 scale). Default: 0.95"
-    )
-    
+    parser.add_argument("--pid-cutoff", type=float, default=0.95, help="Minimum nucleotide PID to consider a hit (0.0-1.0 scale). Default: 0.95")
     args = parser.parse_args()
         
     if not 0.0 <= args.pid_cutoff <= 1.0:

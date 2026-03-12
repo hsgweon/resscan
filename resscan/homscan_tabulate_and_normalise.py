@@ -217,7 +217,9 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk
             fpkpc_val, fpkpmc_val = "0.0000", "0.00"
 
         results.append({
-            "key": f"{family};{aro}",
+            "family": family,  # Pass these separately
+            "aro": aro,        # Pass these separately
+            # "key": f"{family};{aro}",
             "Read_Count": read_count,
             "Fragment_Count": fragment_count,
             "Lateral_Coverage_%": f"{coverage:.2f}",
@@ -225,7 +227,8 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk
             "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val,
             "FPK": f"{fpk:.4f}", "FPKG": f"{fpkg:.4f}", "FPKPC": fpkpc_val, "FPKPMC": fpkpmc_val
         })
-    results.sort(key=lambda x: x['key'])
+    # This sorts primarily by Family, then by ARO
+    results.sort(key=lambda x: (x['family'], x['aro']))
     return results
 
 def aggregate_for_clean_summary(hits_by_final_category):
@@ -245,17 +248,17 @@ def write_summary_file(results, output_path):
     try:
         with open(output_path, 'w', newline='') as f:
             header = [
-                "#AMR_Gene_Family;ARO", "Read_Count", "Fragment_Count", "Lateral_Coverage_%",
-                "Gene_Length_bp", "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC",
-                "RPKPMC", "FPKPMC"
+                "AMR_Gene_Family", "ARO", "Read_Count", "Fragment_Count", 
+                "Lateral_Coverage_%", "Gene_Length_bp", "RPK", "FPK", 
+                "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"
             ]
             writer = csv.DictWriter(f, fieldnames=header, delimiter='\t')
-            
             f.write('\t'.join(header) + '\n')
             
             for row_data in results:
                 row_to_write = {
-                    "#AMR_Gene_Family;ARO": row_data["key"],
+                    "AMR_Gene_Family": row_data["family"],
+                    "ARO": row_data["aro"],
                     "Read_Count": row_data["Read_Count"],
                     "Fragment_Count": row_data["Fragment_Count"],
                     "Lateral_Coverage_%": row_data["Lateral_Coverage_%"],
