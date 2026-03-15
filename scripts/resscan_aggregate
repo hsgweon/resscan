@@ -64,12 +64,16 @@ def aggregate_samplesheet(args, report_type, suffix_map):
         potential_ids = ["AMR_Gene_Family", "ARO", "Gene_Length_bp"]
         id_cols = [c for c in potential_ids if c in combined_df.columns]
         
-        metrics = ["Read_Count", "Fragment_Count", "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"]
+        # Define all possible metrics across different report types
+        potential_metrics = [
+            "Read_Count", "Fragment_Count", "Lateral_Coverage_%", 
+            "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"
+        ]
+
+        # Dynamically filter metrics based on what is actually present in the data
+        metrics = [m for m in potential_metrics if m in combined_df.columns]
 
         for metric in metrics:
-            if metric not in combined_df.columns:
-                continue
-            
             pivoted = combined_df.pivot_table(
                 index=id_cols,
                 columns='Sample',
