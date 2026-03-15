@@ -64,33 +64,39 @@ workflow {
     validateInputs()
 
     // 2. Load Samplesheet
+    // header: false makes the row a List (row[0], row[1], etc.)
+    // filter { ... } ignores empty lines and lines starting with #
     ch_raw = Channel.fromPath(params.samplesheet)
-        .splitCsv(header: true)
+        .splitCsv(header: false, sep: ',', strip: true)
+        .filter { row -> row && !row[0].startsWith('#') }
         .map { row -> 
-            if (!row.sample) { error "Samplesheet missing 'sample' column" }
-            def sid = row.sample.trim()
-            def fqs = row.findAll { k, v -> k != 'sample' && v != null && v != "" }.values().collect { file(it) }
+            def sid = row[0].trim()
+            // Collects all columns from index 1 to the end as files
+            def fqs = row[1..-1].findAll { it != null && it != "" }.collect { file(it) }
+            
+            if (!sid) { error "Found a row with a missing Sample ID in ${params.samplesheet}" }
+            if (fqs.isEmpty()) { error "Sample '${sid}' has no files associated with it." }
+            
             return tuple(sid, fqs)
         }
 
     // 3. Duplicate Validation
+    // This ensures no two rows have the same Sample ID
     ch_raw
         .map { it[0] }
         .toList()
-        .map { list ->
+        .subscribe { list ->
             def dups = list.countBy { it }.findAll { it.value > 1 }.keySet()
             if (dups) {
                 log.error "\n\033[91m[FATAL ERROR] Duplicate Sample IDs detected: ${dups.join(', ')}\033[0m\n"
-                error "Pipeline stopped due to duplicate Sample IDs."
+                System.exit(1)
             }
-            return list
         }
 
     // 4. Execution
     RESSCAN(ch_raw)
-
         .collectFile(name: "batch_run.log", storeDir: params.out, sort: true) { sample_id, cmd, results, mode ->
-            "SAMPLE:  $sample_id\nMODE:    $mode\nSTATUS:  SUCCESS\nCMD:     $cmd\n-------------------------\n"
+            "SAMPLE:  $sample_id\nMODE:    $mode\nSTATUS:  SUCCESS\nCMD:      $cmd\n-------------------------\n"
         }
 }
 
@@ -103,23 +109,30 @@ workflow.onComplete {
         Directory:   ${params.out}
         Master Log:  ${params.out}/batch_run.log
         Nextflow:    ${nextflow.version}
+        
+        ${workflow.errorMessage ? "Error Message: ${workflow.errorMessage}" : ""}
         """.stripIndent()
 
+    // 1. Terminal Outputs
     if (workflow.success) {
         println "\033[92m\n--- Batch Run Complete ---"
-        println "Total Duration: ${workflow.duration}"
-        println "Results:        ${params.out}\033[0m"
-
-        // Optional Cleanup
         if (params.cleanup) {
             println "Cleaning up work directory..."
             file("${workflow.launchDir}/work").deleteDir()
         }
+    } else {
+        println "\033[91m\n--- Batch Run Failed ---"
+        println "Check the logs in ${params.out} for details.\033[0m"
+    }
 
-        // Email Notification
-        if (params.email) {
-            println "Sending email to ${params.email}..."
-            sendMail(to: params.email, subject: "ResScan Batch Complete: ${params.out}", body: msg)
-        }
+    // 2. Email Notification (Sends on both Success and Failure)
+    if (params.email) {
+        println "Sending notification to ${params.email}..."
+        def subjectStatus = workflow.success ? "SUCCESS" : "FAILED"
+        sendMail(
+            to: params.email, 
+            subject: "ResScan Batch ${subjectStatus}: ${params.out}", 
+            body: msg
+        )
     }
 }

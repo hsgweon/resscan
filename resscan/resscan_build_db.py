@@ -686,7 +686,6 @@ def load_aro_index_file(path):
 
 def cleanup_intermediate_files(db_dir):
     print(BColors.cyan("\n--- Cleaning up intermediate files ---"))
-    # Explicitly omitting the two ignored files so they persist
     suffixes_to_remove = [
         ResScanFiles.Stage1.FASTA_HOMOLOG,
         ResScanFiles.Stage1.FASTA_KNOCKOUT,

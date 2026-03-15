@@ -221,7 +221,6 @@ def main():
     parser.add_argument("--tmp-dir", default=".", help="Directory to store the output report file.")
     parser.add_argument("--output-prefix", required=True, help="Prefix for the combined output summary file.")
     parser.add_argument("--pid-cutoff", type=float, default=0.9, help="Minimum percent identity to consider a hit (0.0-1.0 scale).")
-    # <<< NEW ARGUMENT >>>
     parser.add_argument("--pid-type", choices=['protein', 'nucleotide'], default='protein', help="PID type to use for filtering and tie-breaking. Default: protein")
     parser.add_argument("--debug-wta", action="store_true", help="Enable verbose debugging output for WTA resolution logic.")
     args = parser.parse_args()

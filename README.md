@@ -265,14 +265,25 @@ The `resscan_batch` script is a standalone Nextflow-powered orchestrator. It is 
 -   **Automatic Cleanup & Notifications:** Optional flags allow for automatic deletion of intermediate work/ directories and email notifications upon completion.
 
 
-**Samplesheet Format (`samplesheet.csv`)**
+**Samplesheet Format (`samplesheet.csv`):**
 
-The samplesheet is a CSV file. The first column must be named `sample`. Subsequent columns contain paths to FASTQ files.
+The batch pipeline uses a flexible, positional CSV format. Unlike many pipelines, it does not require specific header names; it identifies data based on column order.
+
+**Format Rules:**
+-   **Column 1:** Must be the Sample ID (used for naming folders and files).
+-   **Column 2 onwards:** Every subsequent column is treated as a path to a FASTQ file (supports single-end, paired-end, or multiple lanes).
+-   **Comments:** Any line starting with a hash (#) is completely ignored.
+-   **Headers:** A header row is not required. If you include one, you must start the line with a #.
+
+**Example `samplesheet.csv`:**
 ```tsv
-#sample,fastq_1,fastq_2,fastq_3
-SampleA,/data/A_R1.fq.gz,/data/A_R2.fq.gz
-SampleB,/data/B_R1.fq.gz,/data/B_R2.fq.gz,/data/B_R1_L002.fq.gz
-SampleC,/data/C_SE.fq.gz
+# sample_id, read_1, read_2, read_3 (Optional Header - Ignored due to #). Spaces and tabs are ignored.
+SampleA, data/A_R1.fq.gz, data/A_R2.fq.gz
+SampleB, data/B_L001_R1.fq.gz, data/B_L001_R2.fq.gz, data/B_L002_R1.fq.gz, data/B_L002_R2.fq.gz
+SampleC, data/C_single_end.fastq
+
+# You can comment out specific samples to skip them
+# SampleD, data/D_R1.fq.gz, data/D_R2.fq.gz
 ```
 
 **Run Command:**
@@ -295,27 +306,28 @@ Additional Batch Options:
 
 
 ### 2. Result Aggregation (resscan_aggregate)
-Once batch processing is complete, use the aggregator to consolidate individual sample results into wide-format matrices suitable for downstream statistical analysis in R or Python.
+Once batch processing is complete, use the aggregator to consolidate individual sample results into wide-format, zero-filled tables. This tool uses your samplesheet as the "source of truth" to ensure all samples are accounted for.
+
+**Key Features:**
+-   **Samplesheet-Driven:** Uses the sample column from your CSV to find files and name columns.
+-   **Double-Nested Path Awareness:** Automatically navigates the sample_id/sample_id_results/ structure created by the batch script.
+-   **Zero-Filling:** Samples with no detected AMR genes (or missing files) are explicitly included as columns of zeros.
+-   **Explicit Reporting:** Provides a terminal summary identifying exactly which samples were found, empty, or missing.
 
 ```bash
 # Aggregate all result types (homscan, varscan, map) into a new directory
-resscan_aggregate -i ./resscan_batch_results -o Project_Summary -p Project_Summary
+resscan_aggregate -s samplesheet.csv -i project_results -o project_summary -p Project_Name
 ```
-
-- `i`: The parent directory containing all individual sample folders.
-- `o`: The output directory where the aggregated tables will be saved (created automatically).
-- `p`: (Optional) A prefix for the filenames (Default: aggregated).
 
 The aggregator generates separate pivoted TSV files for each metric (e.g., Project_Summary_homscan_RPK.tsv). These tables use Sample IDs as columns and Gene metadata as rows. Missing values (genes not detected in a sample) are automatically filled with 0.
 
 **Output Data:**
 
-The aggregator generates pivoted TSV files for each metric (e.g., `Project_Summary_homscan_RPK.tsv`).
+The aggregator generates pivoted TSV files for each metric (e.g., `Project_Name_homscan_FPKPMC.tsv`).
 
 - Rows: Resistance Genes/Alleles.
 - Columns: Sample IDs.
 - Values: Normalised metrics (RPK, TPM, or Depth).
-- Fill: Missing values (genes not detected) are automatically filled with 0.
 
 ### 3. Post-Run Housekeeping
 

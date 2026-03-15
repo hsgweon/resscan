@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# scripts/resscan_DB_USCG_download.py
+# resscan/scripts/resscan_DB_USCG_download.py
 import requests
 import gzip
 import os

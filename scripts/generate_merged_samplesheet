@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# scripts/generate_merged_samplesheet
+# resscan/scripts/generate_merged_samplesheet
 import os
 import sys
 import argparse

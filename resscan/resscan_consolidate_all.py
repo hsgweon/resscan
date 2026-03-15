@@ -50,13 +50,27 @@ def get_report_type(filename):
 def reformat_and_write_summary(source_path, destination_path, report_type):
     header = FINAL_HEADERS.get(report_type)
     
-    if not source_path.exists() or os.path.getsize(source_path) == 0:
-        return
+    # Check if we should produce a header-only file due to missing/empty source
+    is_empty = not source_path.exists() or os.path.getsize(source_path) == 0
 
     try:
+        if is_empty:
+            # Create a clean file with just the header
+            with open(destination_path, 'w', newline='') as f_out:
+                header_with_hash = list(header)
+                header_with_hash[0] = "#" + header_with_hash[0]
+                f_out.write('\t'.join(header_with_hash) + '\n')
+            print(BColors.cyan(f"Created empty report (header only): {destination_path.name}"))
+            return
+
+        # If data exists, process normally
         df = pd.read_csv(source_path, sep='\t')
         
         if df.empty:
+            with open(destination_path, 'w', newline='') as f_out:
+                header_with_hash = list(header)
+                header_with_hash[0] = "#" + header_with_hash[0]
+                f_out.write('\t'.join(header_with_hash) + '\n')
             return
 
         # Create a clean final dataframe based on requested headers
@@ -69,7 +83,6 @@ def reformat_and_write_summary(source_path, destination_path, report_type):
         
         # Write out with a # in the header for compatibility
         with open(destination_path, 'w', newline='') as f_out:
-            # We add the # to the first column name for the final output
             header_with_hash = list(final_df.columns)
             header_with_hash[0] = "#" + header_with_hash[0]
             f_out.write('\t'.join(header_with_hash) + '\n')
@@ -99,8 +112,7 @@ def main():
     
     for source_path, report_type in tasks:
         destination_path = main_output_dir / source_path.name
-        if source_path.exists():
-            reformat_and_write_summary(source_path, destination_path, report_type)
+        reformat_and_write_summary(source_path, destination_path, report_type)
 
     print(BColors.green("\n--- Consolidation Complete ---"))
 
