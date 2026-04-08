@@ -1,4 +1,4 @@
-# ResScan v.1.0.0
+# ResScan v.1.0.1
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
