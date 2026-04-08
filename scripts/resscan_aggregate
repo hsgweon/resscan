@@ -60,8 +60,11 @@ def aggregate_samplesheet(args, report_type, suffix_map):
 
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
+
+        if "Gene_Length_bp" in combined_df.columns:
+            combined_df = combined_df.drop(columns=["Gene_Length_bp"])
         
-        potential_ids = ["AMR_Gene_Family", "ARO", "Gene_Length_bp"]
+        potential_ids = ["AMR_Gene_Family", "ARO"]
         id_cols = [c for c in potential_ids if c in combined_df.columns]
         
         # Define all possible metrics across different report types
