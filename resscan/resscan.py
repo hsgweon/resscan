@@ -19,7 +19,7 @@ try:
 except ImportError:
     import pkg_resources
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # ANSI escape codes for colours
 class Colors:
