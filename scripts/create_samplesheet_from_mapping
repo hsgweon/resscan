@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+# resscan/scripts/create_samplesheet_from_mapping
+import argparse
+import os
+import sys
+from collections import defaultdict
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Creates a resscan_batch samplesheet from a two-column sample-to-prefix mapping file. "
+            "Mates within a run are comma-separated; runs from the same sample are semicolon-separated."
+        )
+    )
+    parser.add_argument("--mapping", required=True,
+                        help="Two-column CSV (no header): sample_id,file_prefix. "
+                             "Multiple rows with the same sample_id are treated as separate runs.")
+    parser.add_argument("--fastq-dir", required=True,
+                        help="Directory containing the FASTQ files.")
+    parser.add_argument("--out", required=True,
+                        help="Output samplesheet file path.")
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.fastq_dir):
+        print(f"Error: Directory not found: {args.fastq_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    sample_to_prefixes = defaultdict(list)
+    sample_order = []
+    try:
+        with open(args.mapping, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(',')
+                if len(parts) != 2:
+                    print(f"Warning: Skipping malformed line: {line}", file=sys.stderr)
+                    continue
+                sample_id, prefix = parts[0].strip(), parts[1].strip()
+                if sample_id not in sample_to_prefixes:
+                    sample_order.append(sample_id)
+                sample_to_prefixes[sample_id].append(prefix)
+    except FileNotFoundError:
+        print(f"Error: Mapping file not found: {args.mapping}", file=sys.stderr)
+        sys.exit(1)
+
+    if not sample_to_prefixes:
+        print("Error: No valid entries found in mapping file.", file=sys.stderr)
+        sys.exit(1)
+
+    all_files = {}
+    for fname in sorted(os.listdir(args.fastq_dir)):
+        if fname.endswith(('.fastq.gz', '.fq.gz', '.fastq', '.fq')):
+            all_files[fname] = os.path.abspath(os.path.join(args.fastq_dir, fname))
+
+    rows = []
+    for sample_id in sample_order:
+        prefixes = sample_to_prefixes[sample_id]
+        run_groups = []
+        mate_counts = []
+
+        for prefix in prefixes:
+            matched = sorted(path for fname, path in all_files.items() if fname.startswith(prefix))
+            if not matched:
+                print(f"Warning: No files found for prefix '{prefix}' (sample '{sample_id}'). Skipping run.", file=sys.stderr)
+                continue
+            run_groups.append(matched)
+            mate_counts.append(len(matched))
+
+        if not run_groups:
+            print(f"Warning: No files found for any prefix under sample '{sample_id}'. Skipping sample.", file=sys.stderr)
+            continue
+
+        if len(set(mate_counts)) > 1:
+            print(f"Error: Sample '{sample_id}' has inconsistent mate counts across runs: "
+                  f"{list(zip(prefixes, mate_counts))}", file=sys.stderr)
+            sys.exit(1)
+
+        i_arg = ";".join(",".join(run) for run in run_groups)
+        rows.append((sample_id, i_arg))
+
+    if not rows:
+        print("Error: No valid samples to write.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(args.out, 'w') as f:
+            for sample_id, i_arg in rows:
+                f.write(f"{sample_id}, {i_arg}\n")
+        print(f"Samplesheet written: {args.out} ({len(rows)} samples)")
+        for sample_id, i_arg in rows:
+            run_count = i_arg.count(';') + 1
+            mate_count = i_arg.split(';')[0].count(',') + 1
+            print(f"  {sample_id}: {run_count} run(s) x {mate_count} mate(s)")
+    except IOError as e:
+        print(f"Error writing samplesheet: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

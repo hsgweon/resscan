@@ -1,0 +1,136 @@
+#!/usr/bin/env nextflow
+
+// 1. Parameter Definitions
+params.samplesheet  = "samplesheet.csv"
+params.card         = ""
+params.out          = "resscan_batch_results"
+params.parallel     = 1                     
+params.threads      = 8
+params.args         = ""
+params.dry_run      = false
+params.email        = ""
+params.cleanup      = false
+
+def onCompleteAction() {
+    def msg = """\
+        ResScan Batch Pipeline Report
+        -----------------------------
+        Status:      ${workflow.success ? 'SUCCESS' : 'FAILED'}
+        Duration:    ${workflow.duration}
+        Directory:   ${params.out}
+        Master Log:  ${params.out}/batch_run.log
+        Nextflow:    ${nextflow.version}
+
+        ${workflow.errorMessage ? "Error Message: ${workflow.errorMessage}" : ""}
+        """.stripIndent()
+
+    if (workflow.success) {
+        println "\033[92m\n--- Batch Run Complete ---\033[0m"
+        if (params.cleanup) {
+            println "Cleaning up work directory..."
+            file("${workflow.launchDir}/work").deleteDir()
+        }
+    } else {
+        println "\033[91m\n--- Batch Run Failed ---"
+        println "Check the logs in ${params.out} for details.\033[0m"
+    }
+
+    if (params.email) {
+        println "Sending notification to ${params.email}..."
+        def subjectStatus = workflow.success ? "SUCCESS" : "FAILED"
+        sendMail(
+            to: params.email,
+            subject: "ResScan Batch ${subjectStatus}: ${params.out}",
+            body: msg
+        )
+    }
+}
+
+def validateInputs() {
+    def sSheet = file(params.samplesheet)
+    if ( !sSheet.exists() ) {
+        error "\033[91mERROR: Samplesheet '${params.samplesheet}' not found.\033[0m"
+    }
+
+    if ( !params.card && !params.dry_run ) {
+        error "\033[91mERROR: Please provide the CARD database path using --card\033[0m"
+    }
+
+    def outDir = file(params.out)
+    if ( !outDir.exists() ) {
+        outDir.mkdir()
+    }
+
+    def ids = []
+    sSheet.eachLine { line ->
+        line = line.trim()
+        if (line && !line.startsWith('#')) {
+            def sid = line.split(',')[0].trim()
+            if (sid) ids << sid
+        }
+    }
+    def dups = ids.countBy { it }.findAll { k, v -> v > 1 }.keySet()
+    if (dups) {
+        error "\033[91m[FATAL ERROR] Duplicate Sample IDs detected: ${dups.join(', ')}\033[0m"
+    }
+}
+
+process RESSCAN {
+    maxForks params.parallel as int
+    publishDir { "${params.out}/${sample_id}" }, mode: 'copy'
+    cpus params.threads as int
+    tag "${sample_id}"
+
+    input:
+    tuple val(sample_id), val(i_arg)
+
+    output:
+    tuple val(sample_id), val(cmd_str), path("${sample_id}_results*"), val(mode_label)
+
+    script:
+    if ( params.dry_run ) {
+        mode_label = "DRY_RUN"
+        cmd_str = "sleep 2"
+        """
+        echo "Dry run for ${sample_id}"
+        sleep 2
+        touch ${sample_id}_results_DRYRUN.txt
+        """
+    } else {
+        mode_label = "LIVE"
+        cmd_str = "resscan -i '${i_arg}' -o ${sample_id}_results --card ${params.card} -t ${task.cpus} ${params.args}"
+        """
+        ${cmd_str}
+        """
+    }
+}
+
+workflow {
+    validateInputs()
+
+    // 2. Load Samplesheet
+    // header: false makes the row a List (row[0], row[1], etc.)
+    // filter { ... } ignores empty lines and lines starting with #
+    ch_raw = Channel.fromPath(params.samplesheet)
+        .splitCsv(header: false, sep: ',', strip: true)
+        .filter { row -> row && !row[0].startsWith('#') }
+        .map { row ->
+            def sid = row[0].trim()
+            def i_arg = row[1..-1].join(',').trim()
+
+            if (!sid) { error "Found a row with a missing Sample ID in ${params.samplesheet}" }
+            if (!i_arg) { error "Sample '${sid}' has no files associated with it." }
+
+            return tuple(sid, i_arg)
+        }
+
+    // 3. Execution
+    RESSCAN(ch_raw)
+        .collectFile(name: "batch_run.log", storeDir: params.out, sort: true) { sample_id, cmd, results, mode ->
+            "SAMPLE:  $sample_id\nMODE:    $mode\nSTATUS:  SUCCESS\nCMD:      $cmd\n-------------------------\n"
+        }
+
+    workflow.onComplete {
+        onCompleteAction()
+    }
+}

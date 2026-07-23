@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+
+# resscan/scripts/resscan_aggregate
+import argparse
+import csv
+import pandas as pd
+import sys
+import time
+from pathlib import Path
+
+class Colors:
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+def aggregate_samplesheet(args, report_type, suffix_map):
+    print(f"{Colors.CYAN}Processing {report_type} reports...{Colors.ENDC}")
+
+    try:
+        # Rows can have a variable number of fastq columns (single-end,
+        # paired-end, multi-lane, ...), so parse line-by-line and only take
+        # the sample ID (column 0) rather than loading the whole ragged
+        # table with pandas, which requires a fixed column count.
+        seen = set()
+        all_sample_ids = []
+        with open(args.samplesheet, newline='') as fh:
+            for row in csv.reader(fh, skipinitialspace=True):
+                if not row or not row[0].strip() or row[0].strip().startswith('#'):
+                    continue
+                sid = row[0].strip()
+                if sid.lower() == 'sample' or sid in seen:
+                    continue
+                seen.add(sid)
+                all_sample_ids.append(sid)
+
+        if not all_sample_ids:
+            print(f"{Colors.FAIL}No valid Sample IDs found in samplesheet.{Colors.ENDC}")
+            return False
+
+    except Exception as e:
+        print(f"{Colors.FAIL}Error reading samplesheet: {e}{Colors.ENDC}")
+        return False
+
+    all_dfs = []
+    missing_samples = []
+    empty_samples = []
+    found_count = 0
+
+    for sid in all_sample_ids:
+        sample_dir = Path(args.input_dir) / sid
+        result_sub_dir = sample_dir / f"{sid}_results"
+        expected_file = result_sub_dir / f"{sid}_results{suffix_map[report_type]}"
+
+        if expected_file.exists():
+            try:
+                df = pd.read_csv(expected_file, sep='\t')
+                df.columns = [c.lstrip('#').strip() for c in df.columns]
+
+                if df.empty or len(df) == 0:
+                    empty_samples.append(sid)
+                else:
+                    df['Sample'] = sid
+                    all_dfs.append(df)
+                    found_count += 1
+            except Exception:
+                empty_samples.append(sid)
+        else:
+            missing_samples.append(sid)
+
+    if all_dfs:
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+
+        if "Gene_Length_bp" in combined_df.columns:
+            combined_df = combined_df.drop(columns=["Gene_Length_bp"])
+
+        potential_ids = ["AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class", "Resistance_Mechanism"]
+        id_cols = [c for c in potential_ids if c in combined_df.columns]
+
+        potential_metrics = [
+            "Read_Count", "Fragment_Count", "Lateral_Coverage_%",
+            "RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
+            "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC"
+        ]
+
+        metrics = [m for m in potential_metrics if m in combined_df.columns]
+
+        for metric in metrics:
+            pivoted = combined_df.pivot_table(
+                index=id_cols,
+                columns='Sample',
+                values=metric,
+                aggfunc='first',
+                fill_value=0
+            )
+
+            pivoted = pivoted.reindex(columns=all_sample_ids, fill_value=0).reset_index()
+            out_file = Path(args.output_dir) / f"{args.prefix}_{report_type}_{metric}.tsv"
+            pivoted.to_csv(out_file, sep='\t', index=False)
+
+    print(f"{Colors.GREEN}  - {report_type.upper()} Summary:{Colors.ENDC}")
+    print(f"    Total Samples in Sheet: {len(all_sample_ids)}")
+    print(f"    Samples with Hits:      {found_count}")
+
+    if empty_samples:
+        print(f"    {Colors.WARNING}Samples with Zero Hits ({len(empty_samples)}):{Colors.ENDC} {', '.join(empty_samples)}")
+
+    if missing_samples:
+        print(f"    {Colors.FAIL}Samples Missing Files ({len(missing_samples)}):{Colors.ENDC} {', '.join(missing_samples)}")
+
+    return True
+
+def main():
+    start_time = time.monotonic()
+    parser = argparse.ArgumentParser(description="ResScan Aggregator - Position-based Samplesheet Loading")
+    parser.add_argument("-s", "--samplesheet", required=True, help="Path to the same CSV used for the batch run")
+    parser.add_argument("-i", "--input-dir", required=True, help="The --out directory from the batch run")
+    parser.add_argument("-o", "--output-dir", required=True, help="Where to save the pivoted tables")
+    parser.add_argument("-p", "--prefix", default="aggregated", help="Prefix for output TSV files")
+    parser.add_argument("--type", choices=['all', 'homscan', 'varscan'], default='all')
+
+    args = parser.parse_args()
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    suffix_map = {
+        'homscan': "_homscan.tsv",
+        'varscan': "_varscan.tsv",
+    }
+
+    print(f"\n{Colors.BLUE}{Colors.BOLD}--- ResScan Aggregation Report ---{Colors.ENDC}\n")
+
+    types = ['homscan', 'varscan'] if args.type == 'all' else [args.type]
+    for t in types:
+        aggregate_samplesheet(args, t, suffix_map)
+
+    print(f"\n{Colors.BLUE}Finished in {int(time.monotonic()-start_time)} seconds.{Colors.ENDC}")
+
+if __name__ == "__main__":
+    main()

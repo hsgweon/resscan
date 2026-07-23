@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Conda / virtual environments
+.conda/
+envs/
+*.conda
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Distribution / packaging
+MANIFEST
+*.tar.gz
+*.whl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / analysis output
+*.bam
+*.bai
+*.sam
+*.log
+*.tmp
+*.out
+
+# Large data files (keep test_data structure but ignore heavy files)
+test_data/**/*.fastq.gz
+test_data/**/*.fq.gz
