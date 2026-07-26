@@ -116,10 +116,17 @@ workflow {
         .filter { row -> row && !row[0].startsWith('#') }
         .map { row ->
             def sid = row[0].trim()
-            def i_arg = row[1..-1].join(',').trim()
+            def raw = row[1..-1].join(',').trim()
 
             if (!sid) { error "Found a row with a missing Sample ID in ${params.samplesheet}" }
-            if (!i_arg) { error "Sample '${sid}' has no files associated with it." }
+            if (!raw) { error "Sample '${sid}' has no files associated with it." }
+
+            def i_arg = raw.split(';').collect { run ->
+                run.split(',')
+                   .findAll { it?.trim() }
+                   .collect { f -> file(f.trim()).toAbsolutePath().normalize().toString() }
+                   .join(',')
+            }.join(';')
 
             return tuple(sid, i_arg)
         }
