@@ -361,7 +361,7 @@ def main():
     parser.add_argument("--pid-type", choices=['protein', 'nucleotide'], default='protein', help="PID type to use for filtering. Default: protein")
     parser.add_argument("--consensus", type=float, default=0.9, help="Minimum fraction of non-unique hits that must map to the same gene family to reach a consensus.")
     parser.add_argument("--map-priors-file", default=None, help="Path to a tab-separated file of priors for the MAP solver.")
-    parser.add_argument("--map-metric-column", default='FPKPMC', help="The numeric column to use for MAP abundance resolution. Default: FPKPMC")
+    parser.add_argument("--map-metric-column", default='RPKPMC', help="The numeric column to use for MAP abundance resolution. Default: RPKPMC. (MAP allocates ambiguous reads in proportion, so per-sample normalisations — the …G/…M/…PC/…PMC scalings — cancel; this choice effectively only selects read- vs fragment-based and per-kb vs raw counting.)")
     parser.add_argument("--map-base-prior", type=float, default=1.0, help="Baseline prior pseudo-count. Default: 1.0")
     parser.add_argument("--map-prior-strength", type=float, default=1.0, help="Multiplier for the influence of the priors file. Default: 1.0")
     args = parser.parse_args()

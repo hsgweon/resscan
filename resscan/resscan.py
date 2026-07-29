@@ -20,7 +20,7 @@ try:
 except ImportError:
     from utils import BColors as Colors
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter to add colours to log messages for console output."""
@@ -189,7 +189,7 @@ def main():
     # MAP Resolver Arguments
     map_group = parser.add_argument_group('MAP Resolver Arguments', 'Options for the Maximum A Posteriori abundance resolver.')
     map_group.add_argument("--map-priors-file", default=None, help="Path to a tab-separated file of priors for the MAP resolver.")
-    map_group.add_argument("--map-metric-column", default='FPKPMC', help="The numeric column from the homscan report to use for MAP abundance resolution. Default: FPKPMC")
+    map_group.add_argument("--map-metric-column", default='RPKPMC', help="The numeric column from the homscan report to use for MAP abundance resolution. Default: RPKPMC. (MAP allocates ambiguous reads in proportion, so per-sample normalisations — the …G/…M/…PC/…PMC scalings — cancel; this choice effectively only selects read- vs fragment-based and per-kb vs raw counting.)")
     map_group.add_argument("--map-base-prior", type=float, default=1.0, help="Baseline prior 'pseudo-count' for genes NOT in the priors file. Default: 1.0")
     map_group.add_argument("--map-prior-strength", type=float, default=1.0, help="Multiplier for the influence of the priors file. Default: 1.0")
 

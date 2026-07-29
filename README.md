@@ -1,4 +1,4 @@
-# ResScan v.1.0.1
+# ResScan v.1.0.2
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
@@ -8,6 +8,8 @@ A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes an
 2.  **VarScan:** Detects known resistance-conferring mutations (e.g., SNPs) in target genes.
 
 The pipeline normalises results against universal single-copy genes (USCGs) and produces summary tables and rich, interactive HTML visualisations for data exploration.
+
+> 📚 **New to ResScan? Start with the tutorial.** A hands-on, step-by-step walkthrough — from raw reads through QC and host removal to a finished before/after analysis on real ICU sink-drain data — is available at **[hsgweon.github.io/resscan-tutorial](https://hsgweon.github.io/resscan-tutorial)**.
 
 ## Features
 
@@ -130,7 +132,7 @@ ResScan quantifies AMR genes from sequencing reads; it does **not** perform read
 
 Both steps can be done in a single pass with [`vanish`](https://github.com/hsgweon/vanish), which performs read QC and host-read removal together.
 
-**On host DNA and the per-cell metric.** FPKPMC is the ratio of AMR fragment density to the density of bacterial single-copy genes. Non-bacterial (host) DNA maps to neither term, so it does not bias the per-cell estimate — this is what makes FPKPMC robust to *variable host contamination* across samples, unlike relative metrics such as RPKM. Host-read removal is nonetheless recommended upstream: it reduces compute time, avoids occasional spurious mapping, and is frequently required for data-governance reasons when human reads are present. In short, the per-cell normalisation handles *residual* host DNA gracefully, but it is not a substitute for proper host depletion.
+**On host DNA and the per-cell metric.** RPKPMC is the ratio of AMR read density to the density of bacterial single-copy genes. Non-bacterial (host) DNA maps to neither term, so it does not bias the per-cell estimate — this is what makes the per-cell metric robust to *variable host contamination* across samples, unlike relative metrics such as RPKM. Host-read removal is nonetheless recommended upstream: it reduces compute time, avoids occasional spurious mapping, and is frequently required for data-governance reasons when human reads are present. In short, the per-cell normalisation handles *residual* host DNA gracefully, but it is not a substitute for proper host depletion.
 
 ## Quick Start
 
@@ -192,7 +194,7 @@ The pipeline uses two fundamental units for these calculations: **Reads** and **
 * A **Read** is a single sequence from a FASTQ file.
 * A **Fragment** represents the original piece of DNA sequenced. For paired-end data, the two reads (R1 and R2) from the same DNA fragment are counted as a single fragment. 
 
-The primary metric for interpreting AMR abundance in this pipeline is **FPKPMC**, which estimates the copy number of a gene per million bacterial cells. This is the **signature metric** of the pipeline and the default used by the MAP algorithm for the most accurate abundance estimation (configurable).
+The primary metric for interpreting AMR abundance in this pipeline is **RPKPMC**, which estimates the copy number of a gene per million bacterial cells. This is the **signature metric** of the pipeline and the default used by the MAP algorithm for the most accurate abundance estimation (configurable). RPKPMC is preferred over its fragment-based counterpart FPKPMC because, per kilobase, read counting tracks gene copy number without the length- and insert-size bias that fragment counting carries into between-gene and cross-library comparisons; the two are otherwise interchangeable and both are reported.
 
 | Metric | Calculation | Interpretation |
 | :--- | :--- | :--- |
@@ -210,6 +212,8 @@ The primary metric for interpreting AMR abundance in this pipeline is **FPKPMC**
 The most challenging aspect of quantifying AMR genes from metagenomes is handling ambiguous reads—reads that map with high identity to multiple different but highly similar reference genes.
 
 ResScan's ***Maximum A Posteriori (MAP)*** resolver offers a statistical solution to this problem by determining which gene is the most likely source of the ambiguous reads using an iterative expectation-maximisation-like algorithm.
+
+**A note on `--map-metric-column`.** The resolver distributes each ambiguous read across its candidate genes *in proportion* to their current abundance estimates. Because the allocation is proportional, any **per-sample** scaling factor cancels out — so the depth- and cell-normalised metrics (`…G`, `…M`, `…PC`, `…PMC`) all give **identical** MAP results as their per-kilobase base (`RPK` or `FPK`). In practice the choice of column therefore only selects **read- vs fragment-based** counting (which differ by each gene's reads-per-fragment ratio) and **per-kilobase vs raw** counting. The default `RPKPMC` is read-based and per-kilobase, matching the pipeline's signature metric.
 
 ### Incorporating External Knowledge with Priors
 Sometimes, the evidence from unique reads is sparse. The MAP resolver can be guided by external knowledge using a priors file.
@@ -269,7 +273,7 @@ By default HomScan uses `H` and VarScan uses `V,R`. Give homology-type models (`
 | Flag	| Description	| Default |
 | :--- | :--- | :--- |
 | `--map-priors-file` |	Path to a tab-separated file of priors. | None |
-| `--map-metric-column` |	The numeric column to use for MAP abundance resolution.	| FPKPMC |
+| `--map-metric-column` |	The numeric column to use for MAP abundance resolution.	| RPKPMC |
 | `--map-base-prior` |	Baseline prior 'pseudo-count'.	| 1.0 |
 | `--map-prior-strength` |	Multiplier for the influence of the priors file. | 1.0 |
 
