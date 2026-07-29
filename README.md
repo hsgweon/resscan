@@ -61,6 +61,17 @@ cd resscan
 mamba env create -f environment.yml
 ```
 
+> **macOS (Apple Silicon / M-series):** the solve above can fail with `Could not solve for environment specs` ("no viable options"), because some dependencies (e.g. `bwa`, `diamond`) have no native `osx-arm64` conda build. Build the environment as Intel (`osx-64`) instead — the packages run transparently under Rosetta 2:
+>
+> ```bash
+> softwareupdate --install-rosetta --agree-to-license   # one-time, if Rosetta 2 is not already installed
+> CONDA_SUBDIR=osx-64 mamba env create -f environment.yml
+> mamba activate resscan-env
+> conda config --env --set subdir osx-64                # pin so later installs into this env stay osx-64
+> ```
+>
+> (Linux and Intel Macs use the standard command above.)
+
 **3. Activate the Environment**: Activate the newly created environment. You must do this every time you want to use the pipeline.
 
 ```bash
