@@ -52,8 +52,14 @@ def validateInputs() {
         error "\033[91mERROR: Samplesheet '${params.samplesheet}' not found.\033[0m"
     }
 
-    if ( !params.card && !params.dry_run ) {
-        error "\033[91mERROR: Please provide the CARD database path using --card\033[0m"
+    if ( !params.dry_run ) {
+        if ( !params.card ) {
+            error "\033[91mERROR: Please provide the CARD database path using --card\033[0m"
+        }
+        def cardDir = file(params.card)
+        if ( !cardDir.exists() ) {
+            error "\033[91mERROR: CARD database directory not found: '${params.card}' (resolved to ${cardDir.toAbsolutePath().normalize()}). Provide an absolute path, or one relative to the launch directory.\033[0m"
+        }
     }
 
     def outDir = file(params.out)
@@ -98,7 +104,7 @@ process RESSCAN {
         """
     } else {
         mode_label = "LIVE"
-        cmd_str = "resscan -i '${i_arg}' -o ${sample_id}_results --card ${params.card} -t ${task.cpus} ${params.args}"
+        cmd_str = "resscan -i '${i_arg}' -o ${sample_id}_results --card ${file(params.card).toAbsolutePath().normalize()} -t ${task.cpus} ${params.args}"
         """
         ${cmd_str}
         """
