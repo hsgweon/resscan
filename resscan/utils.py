@@ -89,6 +89,20 @@ def load_uscg_metrics(uscg_report_path):
         print(BColors.yellow("Warning: 'Overall_RPK_Across_All_USCGs' not found in the USCG report."), file=sys.stderr)
     if uscg_fpk is None:
         print(BColors.yellow("Warning: 'Overall_FPK_Across_All_USCGs' not found in the USCG report. FPK-based normalization will be skipped."), file=sys.stderr)
+
+    # A zero denominator is legitimate for samples that contain little or no
+    # cellular material (extracellular DNA, filtered water, a blank). The
+    # per-cell metrics are undefined rather than zero in that case, so they are
+    # reported as NA. Say so plainly: otherwise a whole column of NA looks like
+    # a pipeline failure.
+    if (uscg_rpk is None or uscg_rpk <= 1e-9) and (uscg_fpk is None or uscg_fpk <= 1e-9):
+        print(BColors.yellow(
+            "Warning: no single-copy marker genes were detected in this sample, so the "
+            "per-cell denominator is zero. Gene-length- and depth-normalised metrics "
+            "(RPK, FPK, RPKG, FPKG, RPKM, FPKM) are unaffected, but all per-cell metrics "
+            "(RPKPC/FPKPC, RPKPMC/FPKPMC, RPKPGC/FPKPGC) will be reported as NA. This is "
+            "expected for samples with little or no cellular biomass."), file=sys.stderr)
+
     return uscg_rpk, uscg_fpk
 
 
@@ -114,3 +128,21 @@ def load_sequencing_metrics(filepath):
     except (IOError, ValueError, IndexError) as e:
         print(BColors.red(f"Error reading or parsing sequencing metrics file: {e}"), file=sys.stderr)
         sys.exit(1)
+
+
+def load_effective_length_offset(filepath):
+    """
+    Loads the mean effective-length offset (in bp) from the metrics file.
+
+    This is the fourth line, written from v1.1.0 onwards. Metrics files produced
+    by earlier versions have no such line; zero is returned in that case, which
+    leaves per-kilobase abundance unchanged.
+    """
+    try:
+        with open(filepath, 'r') as f:
+            lines = [l.strip() for l in f.readlines() if l.strip()]
+        if len(lines) > 3:
+            return float(lines[3])
+    except (IOError, ValueError, IndexError):
+        pass
+    return 0.0

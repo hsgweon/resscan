@@ -6,6 +6,7 @@ import os
 import sys
 import re
 import csv
+import math
 from collections import defaultdict
 try:
     from resscan.utils import BColors
@@ -131,6 +132,31 @@ def get_alignment_length_from_cigar(cigar):
     parts = re.findall(r'(\d+)([MDN=X])', cigar)
     return sum(int(num) for num, op in parts)
 
+def get_read_length_from_cigar(cigar):
+    """
+    Full length of the original read, reconstructed from the CIGAR.
+    Sums the operations that consume query bases (M/I/S/=/X) plus hard-clipped
+    bases (H), which are absent from SEQ on supplementary alignments.
+    """
+    parts = re.findall(r'(\d+)([MIS=XH])', cigar)
+    return sum(int(num) for num, op in parts)
+
+def required_alignment_length(read_length, min_aln_len, min_aln_frac):
+    """
+    Minimum aligned length a read must present to be assigned to a gene.
+
+    Two rules combine, and the stricter applies: a fraction of the read's own
+    length, and an absolute floor. At a fraction of 0.5 the window over which a
+    read gathers evidence for a gene equals the gene length exactly, so
+    per-kilobase abundance is unbiased regardless of read length. The floor
+    guards specificity for very short reads; it binds only below
+    min_aln_len / min_aln_frac.
+    """
+    frac_requirement = 0
+    if min_aln_frac > 0 and read_length > 0:
+        frac_requirement = math.ceil(read_length * min_aln_frac)
+    return max(int(min_aln_len), frac_requirement)
+
 def is_valid_alignment(cigar, pos, aln_len, target_len):
     """
     Checks if an alignment is valid under the strict full-read alignment policy.
@@ -156,11 +182,12 @@ def is_valid_alignment(cigar, pos, aln_len, target_len):
 
     return False
 
-def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, file_idx, debug_writer, allowed_gene_types, pid_cutoff, pid_type):
+def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, min_aln_frac, file_idx, debug_writer, allowed_gene_types, pid_cutoff, pid_type):
     pid_cutoff_percent = pid_cutoff * 100.0
     pid_column_name = f"{pid_type}_pid"
     print(BColors.cyan(f"\n--- Processing SAM file: {os.path.basename(sam_path)} (Input File #{file_idx}) ---"))
     print(BColors.cyan(f"--- Applying filter: {pid_column_name} >= {pid_cutoff_percent:.2f}% ---"))
+    print(BColors.cyan(f"--- Applying filter: aligned length >= max({min_aln_len}, {min_aln_frac:g} x read length) ---"))
     
     query_sequences = {}
     with open(sam_path, 'r') as f:
@@ -226,11 +253,18 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, f
                 if debug_writer:
                     debug_row['aln_len'] = aln_len
 
-                if aln_len < min_aln_len:
+                # SEQ is absent from hard-clipped records, so take the longer of
+                # the stored sequence and the CIGAR-derived length.
+                read_length = max(len(actual_seq), get_read_length_from_cigar(cigar))
+                required_aln_len = required_alignment_length(read_length, min_aln_len, min_aln_frac)
+
+                if aln_len < required_aln_len:
                     if debug_writer:
                         debug_row['status'] = 'Rejected'
                         debug_row['reason'] = 'Alignment length below cutoff'
-                        debug_row['details'] = f"Aln length {aln_len} < {min_aln_len}"
+                        debug_row['details'] = (f"Aln length {aln_len} < {required_aln_len} "
+                                                f"(read length {read_length}, floor {min_aln_len}, "
+                                                f"fraction {min_aln_frac:g})")
                         debug_writer.writerow(debug_row)
                     continue
 
@@ -245,8 +279,6 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, f
                         debug_writer.writerow(debug_row)
                     continue
 
-                read_length = len(actual_seq)
-                
                 num_mismatches = get_nm_tag(optional_fields)
                 nuc_pid = 0.0
                 if num_mismatches is not None and aln_len > 0:
@@ -338,8 +370,18 @@ def main():
     parser.add_argument(
         "--min-aln-len",
         type=int,
-        default=100,
-        help="Minimum alignment length (in base pairs) for a hit to be reported. Default: 100"
+        default=40,
+        help="Absolute floor (in base pairs) on the aligned length of a hit. Applied together "
+             "with --min-aln-frac; the stricter of the two governs. Reads shorter than this "
+             "value can never be assigned. Default: 40"
+    )
+    parser.add_argument(
+        "--min-aln-frac",
+        type=float,
+        default=0.5,
+        help="Minimum fraction of a read's own length that must align for the hit to be "
+             "reported. At 0.5 the per-kilobase abundance is unbiased at any read length. "
+             "Set to 0 to use --min-aln-len alone. Default: 0.5"
     )
     parser.add_argument(
         "--gene-types",
@@ -392,7 +434,7 @@ def main():
             print(BColors.yellow(f"Warning: Input file not found, skipping: {sam_file}"), file=sys.stderr)
             continue
         created = process_sam_file(
-            sam_file, db_lengths, db_sequences, args.tmp_dir, args.min_aln_len,
+            sam_file, db_lengths, db_sequences, args.tmp_dir, args.min_aln_len, args.min_aln_frac,
             i + 1, debug_writer, allowed_gene_types, args.pid_cutoff, args.pid_type
         )
         all_created_files.extend(created)

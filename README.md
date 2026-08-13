@@ -1,4 +1,4 @@
-# ResScan v.1.0.2
+# ResScan v.1.1.0
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
@@ -9,7 +9,7 @@ A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes an
 
 The pipeline normalises results against universal single-copy genes (USCGs) and produces summary tables and rich, interactive HTML visualisations for data exploration.
 
-> 📚 **New to ResScan? Start with the tutorial.** A hands-on, step-by-step walkthrough — from raw reads through QC and host removal to a finished before/after analysis on real ICU sink-drain data — is available at **[hsgweon.github.io/resscan-tutorial](https://hsgweon.github.io/resscan-tutorial)**.
+> **New to ResScan? Start with the tutorial.** A hands-on, step-by-step walkthrough — from raw reads through QC and host removal to a finished before/after analysis on real ICU sink-drain data — is available at **[hsgweon.github.io/resscan-tutorial](https://hsgweon.github.io/resscan-tutorial)**.
 
 ## Features
 
@@ -147,16 +147,26 @@ Both steps can be done in a single pass with [`vanish`](https://github.com/hsgwe
 
 ## Quick Start
 
-To check your installation, a small test dataset (`test.fastq.gz`) is provided in the `test_data` directory. The command below runs a basic analysis using your prepared database and 16 threads. Use the correct path (relative or absolute) to the CARD database you built:
+To check your installation, a small test dataset (four paired-end libraries, 852 KB in total) is bundled in `test_data/`. Run it from the repository root, using the correct path to the CARD database you built:
 
 ```bash
-cd test_data
-resscan -i test.fastq.gz \
+resscan -i test_data/fastq/SRR10842857_1.fastq.gz,test_data/fastq/SRR10842857_2.fastq.gz \
         -o test_run \
         -t 16 \
-        --card ../resscan_CARD_v4.0.1
+        --card resscan_CARD_v4.0.1
 ```
-This will create a directory named `test_run` containing all the results.
+
+This creates a directory named `test_run` containing all the results; the HomScan report should list around 90 AMR gene families, and VarScan 5 mutation-conferred determinants.
+
+`test_data/samplesheet.csv` additionally demonstrates each supported input layout — paired-end, single-end, and either of those split across multiple sequencing runs — and can be run in one go with `resscan_batch`:
+
+```bash
+resscan_batch --samplesheet test_data/samplesheet.csv \
+              --card resscan_CARD_v4.0.1 \
+              --out test_batch_results --parallel 2 --threads 8
+```
+
+See [`test_data/README.md`](test_data/README.md) for what the dataset contains and what to expect. Note that AMR reads in it are deliberately over-represented, so the abundances it reports are not biologically meaningful.
 
 **Input format.** `-i` uses commas to separate mates within a run and semicolons to separate multiple sequencing runs from the same sample. ResScan derives the fragment count from the mate structure automatically.
 
@@ -209,15 +219,52 @@ The primary metric for interpreting AMR abundance in this pipeline is **RPKPMC**
 
 | Metric | Calculation | Interpretation |
 | :--- | :--- | :--- |
-| **RPK / FPK** | Reads (or Fragments) / (Gene Length / 1000) | **Reads/Fragments Per Kilobase.** Normalises for gene length. |
+| **RPK** | Reads / (Effective Length / 1000) | **Reads Per Kilobase.** Normalises for the length over which reads are actually gathered (see below). |
+| **FPK** | Fragments / (Gene Length / 1000) | **Fragments Per Kilobase.** Divided by gene length; no effective-length correction is possible (see below). |
 | **RPKG / FPKG** | RPK (or FPK) / (Total Sample Bases / 1e9) | **Reads/Fragments Per Kilobase per Gigabase.** Normalises for sequencing depth. |
 | **RPKM** | RPK / (Total Reads / 1e6) | **Reads Per Kilobase per Million reads.** Total reads counts every individual read including all mates. |
 | **FPKM** | FPK / (Total Fragments / 1e6) | **Fragments Per Kilobase per Million fragments.** Denominator is fragment count (paired mates counted once). |
 | **RPKPC / FPKPC** | RPK_amr / RPK_uscg_avg | **Reads/Fragments Per Kilobase Per Cell.** Estimated average gene copies per bacterial cell. |
 | **RPKPMC / FPKPMC** | RPKPC × 1,000,000 | **Reads/Fragments Per Kilobase Per Million Cells.** FPKPMC of 1,000,000 ≈ one gene copy per cell. |
 | **RPKPGC / FPKPGC** | RPKPC × 1,000,000,000 | **Reads/Fragments Per Kilobase Per Billion Cells.** FPKPGC scaled by 10⁹; useful for very low-abundance genes. |
+| **Coverage_Depth** | Aligned bases in gene / Gene Length | **Mean depth per base.** Reported for reference; the recommended unit when reads are long relative to genes. |
+| **Effective_Length_bp** | Gene Length + per-sample offset | The length RPK is divided by. Equals the gene length under default settings. |
 
 **Single-copy-gene normalisation (the per-cell denominator).** The `RPK_uscg_avg` / `FPK_uscg_avg` term used by the per-cell metrics is the average density of a packaged set of **40 universal single-copy marker genes** — ribosomal proteins, RNA polymerase subunits, aminoacyl-tRNA synthetases, and other core housekeeping genes. Sequences are derived from the **NCBI COG2020** database and quantified at the protein level with **DIAMOND**. Because these genes occur in (almost) exactly one copy per genome across bacteria, their average density approximates the number of bacterial genomes — i.e. cells — in the sample, which is what makes the per-cell metrics biologically interpretable. A custom marker set can be supplied via `--db-scg` / `--db-scg-lengths`.
+
+**Effective length (why RPK is not simply reads / gene length).** A read counts towards a gene when at least `m` of its bases align inside it, so it may overhang either boundary. Each read therefore gathers evidence over `L - 2m + r`, not `L`. ResScan divides read-based metrics by this **effective length**, reported per gene as `Effective_Length_bp`. Under the default `--homscan-min-aln-frac 0.5` the offset is zero and the effective length equals the gene length exactly, so no correction is being applied — the counting is unbiased by construction. A non-zero offset appears only when the fraction is disabled or the floor binds, and ResScan prints it at the start of the run.
+
+**Fragment metrics carry a bias that cannot be corrected.** The same reasoning applies to fragments, but their effective length is `L - 2m + I`, where `I` is the DNA fragment (insert) length from library preparation. That distribution is not recorded in any output file and cannot be reconstructed from alignments against a reference gene database. Fragment-based metrics (`FPK`, `FPKPMC`, …) are therefore reliable for comparing **the same gene across samples**, where the multiplier cancels, but not for comparing **different genes** or comparing against another study. Use the read-based metrics for those.
+
+**Per-cell normalisation does not address this.** The USCG denominator is a single scalar per sample, identical for every gene within it. It resolves comparability *between samples* — which it does well, and it should be retained — but it rescales the whole profile uniformly and so cannot remove any length-dependent bias. `RPKPMC` and `FPKPMC` inherit the properties of `RPK` and `FPK` in this respect.
+
+
+**The USCG table (`*_uscg.tsv`).** Every run writes a per-gene table of the single-copy
+marker genes, so the per-cell denominator is inspectable rather than implicit:
+
+| Column | Meaning |
+| :--- | :--- |
+| `USCG_ID` | Marker gene name |
+| `Gene_Length_AA` | Reference length in amino acids (markers are quantified at protein level) |
+| `Read_Count` / `Fragment_Count` | Reads/fragments assigned to that marker |
+| `RPK` / `FPK` | Per-kilobase density for that marker |
+
+The final row, **`ALL_USCGs`**, carries the pooled values that are **actually used** as the
+per-cell denominator — its `RPK` is exactly the `Overall_RPK_Across_All_USCGs` by which every
+`RPKPC`/`RPKPMC`/`RPKPGC` is divided. Note that this pooled figure is total mapped reads over
+the combined reference length, which is *not* the mean of the per-gene RPKs: longer markers
+carry more weight. `resscan_aggregate --type uscg` pivots these across samples, giving one
+matrix per metric in which the `ALL_USCGs` row is each sample's denominator.
+
+**Samples with no cellular biomass.** If no reads map to any marker gene — extracellular
+("free") DNA, filtered water, a blank, or a heavily host-dominated sample — the per-cell
+denominator is zero. ResScan does not fail. It warns, and reports every per-cell metric
+(`RPKPC`/`FPKPC`, `RPKPMC`/`FPKPMC`, `RPKPGC`/`FPKPGC`) as `NA`, because copies per cell is
+*undefined* when the cell count is zero, not zero. Gene-length- and depth-normalised metrics
+(`RPK`, `FPK`, `RPKG`, `FPKG`, `RPKM`, `FPKM`) are computed as usual and remain valid, so such
+samples can still be analysed — just not on a per-cell basis. The MAP resolver detects that its
+chosen metric column is entirely `NA` and falls back automatically (to `RPKG`, then `RPK`, then
+`Read_Count`), reporting which column it used.
 
 ## Understanding the MAP Resolver
 The most challenging aspect of quantifying AMR genes from metagenomes is handling ambiguous reads—reads that map with high identity to multiple different but highly similar reference genes.
@@ -265,6 +312,8 @@ resscan -i <INPUT_FILES> -o <OUTPUT_PREFIX> --card <DB_DIR> [OPTIONS]
 | `--varscan-pid-cutoff` | Minimum nucleotide percent identity for VarScan hits (0.0-1.0 scale). | `0.95` |
 | `--homscan-pid-type` | PID type to use for HomScan filtering (`protein` or `nucleotide`). | `protein` |
 | `--consensus-cutoff` | Minimum fraction of ambiguous hits that must map to the same gene family to reach a consensus. | `0.8` |
+| `--homscan-min-aln-frac` | Minimum fraction of a read's own length that must align for a HomScan hit. At `0.5` per-kilobase abundance is unbiased at any read length. `0` disables. | `0.5` |
+| `--homscan-min-aln-len` | Absolute floor (bp) on aligned length. Applied together with the fraction; the stricter governs. Reads shorter than this can never be assigned. | `40` |
 | `--homscan-gene-types` | Comma-separated list of gene types for HomScan (e.g., 'H,K'). | `H` |
 | `--varscan-gene-types` | Comma-separated list of variant types for VarScan (e.g., 'V,R,O'). | `V,R` |
 
@@ -279,6 +328,29 @@ resscan -i <INPUT_FILES> -o <OUTPUT_PREFIX> --card <DB_DIR> [OPTIONS]
 | `O` | Protein overexpression model | A regulatory mutation raising expression confers resistance | VarScan |
 
 By default HomScan uses `H` and VarScan uses `V,R`. Give homology-type models (`H`, `K`) to HomScan and variant-type models (`V`, `R`, `O`) to VarScan; pairing an engine with a model type it isn't designed for (e.g. giving VarScan a homolog model that has no defined mutations) will not produce meaningful results.
+
+
+**Alignment length thresholds (`--homscan-min-aln-frac` and `--homscan-min-aln-len`).** A read is assigned to a gene only when enough of it aligns. Two rules combine, and the stricter one governs:
+
+```
+required aligned length = max(--homscan-min-aln-len, --homscan-min-aln-frac x read length)
+```
+
+*Why a fraction.* A read does not have to lie wholly inside a gene to be counted — it may overhang either boundary. A read of length `r` that must present `m` aligned bases therefore gathers evidence for the gene over a window of `L - 2m + r` rather than over `L`. Because per-kilobase metrics divide by the gene length, any gap between the two is a length-dependent bias that inflates or deflates short genes relative to long ones. Setting the threshold to **half of each read's own length** makes `m = r/2`, so the window equals the gene length exactly and the bias vanishes — for every read individually, whatever its length, and regardless of how heterogeneous read lengths are after quality trimming. This is why the default is `0.5`.
+
+*Why also a floor.* The percent-identity filter is evaluated over the alignment, so its power falls as alignments shorten; below roughly 25–30 bp a chance match becomes plausible. The floor guards this. It binds only for reads shorter than `--homscan-min-aln-len / --homscan-min-aln-frac` (80 bp at the defaults), so on typical data it never activates:
+
+| Read length | Required | As % of read | Outcome |
+| :--- | :--- | :--- | :--- |
+| 150 bp | 75 bp | 50% | unbiased |
+| 100 bp | 50 bp | 50% | unbiased |
+| 80 bp | 40 bp | 50% | unbiased |
+| 60 bp | 40 bp | 67% | counted, slight under-measurement |
+| 39 bp | 40 bp | impossible | **not assignable** |
+
+> **Reads shorter than `--homscan-min-aln-len` can never be assigned to a gene.** They are still counted in the per-cell (USCG) denominator, so leaving the floor above your shortest reads deflates abundance rather than merely losing sensitivity. If your reads are trimmed below 80 bp, lower the floor (e.g. `--homscan-min-aln-len 25`). ResScan prints the number of unassignable reads and the resulting effective-length offset at the start of each run.
+
+*Using a fixed threshold instead.* Setting `--homscan-min-aln-frac 0` disables the proportional rule, so `--homscan-min-aln-len` alone applies as an absolute cutoff in base pairs. This reintroduces the length-dependent bias described above (a fixed `m` makes the counting window `L - 2m + r`, which differs from `L` unless `m` happens to equal half the read length), so it is offered for reproducing a specific fixed-threshold analysis rather than as a recommended setting.
 
 #### **MAP Resolver Arguments**
 | Flag	| Description	| Default |
@@ -346,6 +418,9 @@ resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
 ```
 
 ## Output Files
+
+Alongside the HomScan and VarScan reports, each run writes `*_uscg.tsv`, the per-gene
+single-copy-marker table whose `ALL_USCGs` row is the per-cell normalisation denominator.
 
 | File / Directory | Description |
 | :--- | :--- |
@@ -498,6 +573,10 @@ ResScan's variant detection (VarScan) is deliberately conservative. Two constrai
 
 -   **Substitution variants only.** VarScan reports resistance conferred by nucleotide and amino-acid substitutions. AROs whose CARD model requires a frameshift, insertion, deletion, or duplication are skipped (and reported during the run, e.g. "Skipped N AROs containing complex mutations"). Such determinants will not appear in the output.
 -   **Single-read allelic phasing.** For multi-residue models, VarScan requires *all* constituent mutations to be present on a single read alignment. This guarantees physical linkage and removes false "inferred resistance" arising when mutations are distributed across different molecules — but it also means that, with short reads, mutations separated by more than the read length cannot be co-confirmed and may be missed. VarScan favours specificity over sensitivity by design. (In paired-end data each mate is a separate alignment, so the required mutations must co-occur within a single mate.)
+
+A third constraint applies to HomScan abundance:
+
+-   **Fragment-based metrics cannot be length-corrected.** A fragment's effective length depends on the DNA insert-length distribution of the library, which is not recorded in any output file and cannot be recovered from alignments against a reference gene database. Read-based metrics are corrected because their effective length follows from the read length and the alignment threshold, both of which are known. Fragment-based metrics should therefore not be used to compare different genes with one another, or to compare abundances against another study.
 
 These are intentional trade-offs in favour of precision; the per-variant HTML evidence reports let any borderline call be inspected directly.
 

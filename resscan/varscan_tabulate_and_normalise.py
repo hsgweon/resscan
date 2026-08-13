@@ -66,7 +66,7 @@ def calculate_and_write_summary(read_counts, fragment_sets, aro_to_family, aro_t
             rpkpc_val = f"{rpkpc:.4f}"
             rpkpmc_val = f"{rpkpc * 1_000_000:.2f}"
             rpkpgc_val = f"{rpkpc * 1_000_000_000:.2f}"
-        elif uscg_rpk is not None and rpk == 0.0:
+        elif uscg_rpk is not None and uscg_rpk > 1e-9 and rpk == 0.0:
             rpkpc_val, rpkpmc_val, rpkpgc_val = "0.0000", "0.00", "0.00"
 
         fpk = (f_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
@@ -78,7 +78,7 @@ def calculate_and_write_summary(read_counts, fragment_sets, aro_to_family, aro_t
             fpkpc_val = f"{fpkpc:.4f}"
             fpkpmc_val = f"{fpkpc * 1_000_000:.2f}"
             fpkpgc_val = f"{fpkpc * 1_000_000_000:.2f}"
-        elif uscg_fpk is not None and fpk == 0.0:
+        elif uscg_fpk is not None and uscg_fpk > 1e-9 and fpk == 0.0:
             fpkpc_val, fpkpmc_val, fpkpgc_val = "0.0000", "0.00", "0.00"
 
         results.append({

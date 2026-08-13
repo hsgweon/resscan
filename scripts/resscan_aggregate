@@ -74,14 +74,20 @@ def aggregate_samplesheet(args, report_type, suffix_map):
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
 
-        if "Gene_Length_bp" in combined_df.columns:
-            combined_df = combined_df.drop(columns=["Gene_Length_bp"])
+        for const_col in ("Gene_Length_bp", "Gene_Length_AA"):
+            if const_col in combined_df.columns:
+                combined_df = combined_df.drop(columns=[const_col])
 
-        potential_ids = ["AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class", "Resistance_Mechanism"]
+        potential_ids = ["AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class",
+                         "Resistance_Mechanism", "USCG_ID"]
         id_cols = [c for c in potential_ids if c in combined_df.columns]
 
+        # Effective_Length_bp is kept rather than dropped alongside Gene_Length_bp:
+        # it varies between samples whenever read length or alignment settings
+        # differ, so the per-sample matrix records what correction was applied.
         potential_metrics = [
-            "Read_Count", "Fragment_Count", "Lateral_Coverage_%",
+            "Read_Count", "Fragment_Count", "Lateral_Coverage_%", "Coverage_Depth",
+            "Effective_Length_bp",
             "RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
             "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC"
         ]
@@ -120,7 +126,7 @@ def main():
     parser.add_argument("-i", "--input-dir", required=True, help="The --out directory from the batch run")
     parser.add_argument("-o", "--output-dir", required=True, help="Where to save the pivoted tables")
     parser.add_argument("-p", "--prefix", default="aggregated", help="Prefix for output TSV files")
-    parser.add_argument("--type", choices=['all', 'homscan', 'varscan'], default='all')
+    parser.add_argument("--type", choices=['all', 'homscan', 'varscan', 'uscg'], default='all')
 
     args = parser.parse_args()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -128,11 +134,12 @@ def main():
     suffix_map = {
         'homscan': "_homscan.tsv",
         'varscan': "_varscan.tsv",
+        'uscg': "_uscg.tsv",
     }
 
     print(f"\n{Colors.BLUE}{Colors.BOLD}--- ResScan Aggregation Report ---{Colors.ENDC}\n")
 
-    types = ['homscan', 'varscan'] if args.type == 'all' else [args.type]
+    types = ['homscan', 'varscan', 'uscg'] if args.type == 'all' else [args.type]
     for t in types:
         aggregate_samplesheet(args, t, suffix_map)
 

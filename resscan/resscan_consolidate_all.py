@@ -15,14 +15,15 @@ except ImportError:
 FINAL_HEADERS = {
     "homscan": [
         "AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class", "Resistance_Mechanism",
-        "Read_Count", "Fragment_Count", "Lateral_Coverage_%",
+        "Read_Count", "Fragment_Count", "Lateral_Coverage_%", "Coverage_Depth",
         "RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
         "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC",
         "Top_ARO", "Allocation_Proportions"
     ],
     "homscan_detailed": [
         "AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class", "Resistance_Mechanism",
-        "Read_Count", "Fragment_Count", "Lateral_Coverage_%", "Gene_Length_bp",
+        "Read_Count", "Fragment_Count", "Lateral_Coverage_%", "Coverage_Depth",
+        "Gene_Length_bp", "Effective_Length_bp",
         "RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
         "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC"
     ],
@@ -32,12 +33,16 @@ FINAL_HEADERS = {
         "RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
         "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC"
     ],
+    "uscg": [
+        "USCG_ID", "Gene_Length_AA", "Read_Count", "Fragment_Count", "RPK", "FPK"
+    ],
 }
 
 def get_report_type(filename):
     if "homscan_detailed.tsv" in filename: return "homscan_detailed"
     if "homscan.tsv" in filename: return "homscan"
     if "varscan.tsv" in filename: return "varscan"
+    if "uscg.tsv" in filename: return "uscg"
     return None
 
 def reformat_and_write_summary(source_path, destination_path, report_type):
@@ -95,6 +100,7 @@ def main():
         (main_output_dir / 'tmp' / 'homscan' / f"{filename_prefix}_homscan.tsv", "homscan"),
         (main_output_dir / 'tmp' / 'homscan' / f"{filename_prefix}_homscan_detailed.tsv", "homscan_detailed"),
         (main_output_dir / 'tmp' / 'varscan' / f"{filename_prefix}_varscan.tsv", "varscan"),
+        (main_output_dir / 'tmp' / 'scgscan' / f"{filename_prefix}_uscg.tsv", "uscg"),
     ]
 
     for source_path, report_type in tasks:

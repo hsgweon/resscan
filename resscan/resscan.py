@@ -20,7 +20,7 @@ try:
 except ImportError:
     from utils import BColors as Colors
 
-__version__ = "1.0.2"
+__version__ = "1.1.0"
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter to add colours to log messages for console output."""
@@ -180,6 +180,8 @@ def main():
     parser.add_argument("--homscan-pid-cutoff", type=float, default=0.95, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
     parser.add_argument("--varscan-pid-cutoff", type=float, default=0.95, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
     parser.add_argument("--consensus-cutoff", type=float, default=0.8, help="Consensus cutoff for homscan family assignment. Default: 0.80")
+    parser.add_argument("--homscan-min-aln-len", type=int, default=40, help="Absolute floor (bp) on the aligned length of a HOMSCAN hit. Applied together with --homscan-min-aln-frac; the stricter governs. Reads shorter than this can never be assigned. Default: 40")
+    parser.add_argument("--homscan-min-aln-frac", type=float, default=0.5, help="Minimum fraction of a read's own length that must align for a HOMSCAN hit. At 0.5 per-kilobase abundance is unbiased at any read length. Set to 0 to use --homscan-min-aln-len alone. Default: 0.5")
     
     # Gene Type & PID Type Arguments
     parser.add_argument("--homscan-gene-types", default='H', help="Comma-delimited list of gene types for homscan (e.g., 'H,K'). Default: 'H'")
@@ -327,18 +329,19 @@ def main():
 
         diamond_outputs = [scgscan_tmp / f"{f.name}.diamond.tsv" for f in fastq_files]
         uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
+        uscg_table = scgscan_tmp / f"{output_prefix_name}_uscg.tsv"
         
         valid_diamond_outputs = [str(p) for p in diamond_outputs if file_exists_and_is_not_empty(p)]
 
         if valid_diamond_outputs:
-            scg_quant_cmd = [sys.executable, str(src_dir / "scgscan_quantify_from_diamond.py"), "-i", ",".join(valid_diamond_outputs), "-l", str(db_scg_lengths), "-o", str(uscg_report), "-e", "1e-5"]
+            scg_quant_cmd = [sys.executable, str(src_dir / "scgscan_quantify_from_diamond.py"), "-i", ",".join(valid_diamond_outputs), "-l", str(db_scg_lengths), "-o", str(uscg_report), "--output-table", str(uscg_table), "-e", "1e-5"]
             if not run_command(scg_quant_cmd): sys.exit(1)
         else:
             logging.warning("No valid DIAMOND hits found in any files. Skipping SCG quantification.")
             uscg_report.touch()
 
         total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
-        calc_bases_cmd = [sys.executable, str(src_dir / "scgscan_calculate_total_bases.py"), "-i", input_fastqs_str, "-o", str(total_bases_file), "-t", str(args.threads), "--mate-count", str(mate_count)]
+        calc_bases_cmd = [sys.executable, str(src_dir / "scgscan_calculate_total_bases.py"), "-i", input_fastqs_str, "-o", str(total_bases_file), "-t", str(args.threads), "--mate-count", str(mate_count), "--min-aln-len", str(args.homscan_min_aln_len), "--min-aln-frac", str(args.homscan_min_aln_frac)]
         if not run_command(calc_bases_cmd): sys.exit(1)
     else:
         if args.skip_to_tabulate:
@@ -375,7 +378,9 @@ def main():
                 "--tmp-dir", str(homscan_tmp), "--output-prefix", output_prefix_name,
                 "--gene-types", args.homscan_gene_types,
                 "--pid-cutoff", str(args.homscan_pid_cutoff),
-                "--pid-type", args.homscan_pid_type
+                "--pid-type", args.homscan_pid_type,
+                "--min-aln-len", str(args.homscan_min_aln_len),
+                "--min-aln-frac", str(args.homscan_min_aln_frac)
             ]
             if args.debug: homscan_process_cmd.append("--debug")
             if not run_command(homscan_process_cmd): sys.exit(1)

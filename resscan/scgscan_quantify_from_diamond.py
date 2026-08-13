@@ -116,6 +116,47 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
     except IOError as e:
         print(BColors.red(f"Error writing report file: {e}"), file=sys.stderr)
 
+    return overall_rpk, overall_fpk
+
+
+def write_uscg_table(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths,
+                     overall_rpk, overall_fpk):
+    """
+    Writes the per-gene USCG table as a plain TSV.
+
+    One row per marker gene, plus a final ALL_USCGs row carrying the pooled
+    values that are actually used as the per-cell denominator. The pooled RPK is
+    total mapped reads divided by the combined reference length, which is not the
+    same as the mean of the per-gene RPKs: genes are weighted by their length.
+    Lengths are amino acids, since the markers are quantified at protein level.
+    """
+    print(BColors.cyan(f"--- Writing USCG table to: {output_path} ---"))
+    total_mapped_reads = sum(uscg_read_counts.values())
+    total_mapped_fragments = sum(len(s) for s in uscg_fragment_sets.values())
+    total_ref_len = sum(uscg_lengths.values())
+
+    try:
+        with open(output_path, 'w') as f:
+            f.write("USCG_ID\tGene_Length_AA\tRead_Count\tFragment_Count\tRPK\tFPK\n")
+            for gene_id in sorted(uscg_lengths.keys()):
+                length = uscg_lengths[gene_id]
+                read_count = uscg_read_counts.get(gene_id, 0)
+                fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
+                rpk = (read_count / (length / 1000.0)) if length > 0 else 0.0
+                fpk = (fragment_count / (length / 1000.0)) if length > 0 else 0.0
+                f.write(f"{gene_id}\t{length}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
+
+            f.write(f"ALL_USCGs\t{total_ref_len}\t{total_mapped_reads}\t{total_mapped_fragments}"
+                    f"\t{overall_rpk:.4f}\t{overall_fpk:.4f}\n")
+
+        if total_mapped_reads == 0:
+            print(BColors.yellow(
+                "--- Warning: no reads mapped to any single-copy marker gene. The per-cell "
+                "denominator is zero, so per-cell metrics will be reported as NA. ---"))
+        print(BColors.green("--- Successfully wrote USCG table."))
+    except IOError as e:
+        print(BColors.red(f"Error writing USCG table: {e}"), file=sys.stderr)
+
 def main():
     parser = argparse.ArgumentParser(
         description="Quantifies Universal Single-Copy Genes (USCGs) from a DIAMOND tabular output file."
@@ -134,6 +175,11 @@ def main():
         "-o", "--output-report",
         required=True,
         help="Path for the output summary TSV report."
+    )
+    parser.add_argument(
+        "--output-table",
+        default=None,
+        help="Path for the per-gene USCG table (plain TSV). Defaults to the report path with '_report' removed."
     )
     parser.add_argument(
         "-e", "--evalue",
@@ -167,7 +213,17 @@ def main():
             
         total_alignments_processed += alignments_in_file
 
-    write_report(args.output_report, aggregated_read_counts, aggregated_fragment_sets, uscg_lengths, total_alignments_processed)
+    overall_rpk, overall_fpk = write_report(
+        args.output_report, aggregated_read_counts, aggregated_fragment_sets,
+        uscg_lengths, total_alignments_processed)
+
+    table_path = args.output_table
+    if table_path is None:
+        table_path = args.output_report.replace("_uscg_report.tsv", "_uscg.tsv")
+        if table_path == args.output_report:
+            table_path = args.output_report + ".table.tsv"
+    write_uscg_table(table_path, aggregated_read_counts, aggregated_fragment_sets,
+                     uscg_lengths, overall_rpk, overall_fpk)
     
     print(BColors.green("\n\n--- USCG Quantification from DIAMOND Complete ---"))
 

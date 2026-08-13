@@ -8,9 +8,9 @@ import csv
 import re
 from collections import defaultdict, Counter
 try:
-    from resscan.utils import BColors, load_metadata, load_uscg_metrics, load_sequencing_metrics
+    from resscan.utils import BColors, load_metadata, load_uscg_metrics, load_sequencing_metrics, load_effective_length_offset
 except ImportError:
-    from utils import BColors, load_metadata, load_uscg_metrics, load_sequencing_metrics
+    from utils import BColors, load_metadata, load_uscg_metrics, load_sequencing_metrics, load_effective_length_offset
 
 ARO_PATTERN = re.compile(r'ARO_\d+')
 
@@ -120,8 +120,19 @@ def get_annotation(aro, list_of_hits, aro_to_annotation):
     return _join("ARO_Name"), _join("Drug_Class"), _join("Resistance_Mechanism")
 
 def calculate_normalised_metrics(hits_by_final_category, aro_to_length, aro_to_annotation,
-                                  uscg_rpk, uscg_fpk, total_bases, total_reads=None, total_fragments=None):
-    """Calculates all metrics for each AMR entry, including inline annotation."""
+                                  uscg_rpk, uscg_fpk, total_bases, total_reads=None, total_fragments=None,
+                                  eff_len_offset=0.0):
+    """
+    Calculates all metrics for each AMR entry, including inline annotation.
+
+    Read-based per-kilobase metrics are divided by the effective length rather
+    than the gene length. A read is assigned to a gene when at least m of its
+    bases align within it, so it may begin before the gene starts and still be
+    counted; the window over which a read gathers evidence is therefore
+    (L - 2m + r), not L. The per-sample offset (r - 2m) is supplied by the
+    sequencing metrics file. Under the default alignment settings m = r/2, the
+    offset is zero and the effective length equals the gene length exactly.
+    """
     print(BColors.cyan("--- Calculating metrics... ---"))
     results = []
     total_bases_in_gb = (total_bases / 1e9) if total_bases > 0 else 0
@@ -148,7 +159,21 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, aro_to_a
         else:
             gene_length_bp = aro_to_length.get(aro, 0)
 
-        rpk = (read_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
+        # Effective length for read counting. Falls back to the gene length if a
+        # large negative offset would drive it to zero on a very short gene.
+        eff_length_bp = gene_length_bp + eff_len_offset
+        if eff_length_bp <= 0:
+            eff_length_bp = gene_length_bp
+
+        aligned_bases = 0
+        for hit in list_of_hits:
+            try:
+                aligned_bases += int(hit['nucleotide_denominator'])
+            except (ValueError, KeyError, TypeError):
+                continue
+        coverage_depth = (aligned_bases / gene_length_bp) if gene_length_bp > 0 else 0.0
+
+        rpk = (read_count / (eff_length_bp / 1000.0)) if eff_length_bp > 0 else 0.0
         rpkg = (rpk / total_bases_in_gb) if total_bases_in_gb > 0 else 0.0
         rpkm_val = f"{rpk / total_reads_in_millions:.4f}" if total_reads_in_millions else "NA"
         rpkpc_val, rpkpmc_val, rpkpgc_val = "NA", "NA", "NA"
@@ -157,7 +182,7 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, aro_to_a
             rpkpc_val = f"{rpkpc:.4f}"
             rpkpmc_val = f"{rpkpc * 1_000_000:.2f}"
             rpkpgc_val = f"{rpkpc * 1_000_000_000:.2f}"
-        elif uscg_rpk is not None and rpk == 0.0:
+        elif uscg_rpk is not None and uscg_rpk > 1e-9 and rpk == 0.0:
             rpkpc_val, rpkpmc_val, rpkpgc_val = "0.0000", "0.00", "0.00"
 
         fpk = (fragment_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
@@ -169,7 +194,7 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, aro_to_a
             fpkpc_val = f"{fpkpc:.4f}"
             fpkpmc_val = f"{fpkpc * 1_000_000:.2f}"
             fpkpgc_val = f"{fpkpc * 1_000_000_000:.2f}"
-        elif uscg_fpk is not None and fpk == 0.0:
+        elif uscg_fpk is not None and uscg_fpk > 1e-9 and fpk == 0.0:
             fpkpc_val, fpkpmc_val, fpkpgc_val = "0.0000", "0.00", "0.00"
 
         aro_name, drug_class, resistance_mechanism = get_annotation(aro, list_of_hits, aro_to_annotation)
@@ -183,7 +208,9 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, aro_to_a
             "Read_Count": read_count,
             "Fragment_Count": fragment_count,
             "Lateral_Coverage_%": f"{coverage:.2f}",
+            "Coverage_Depth": f"{coverage_depth:.4f}",
             "Gene_Length_bp": f"{gene_length_bp:.2f}" if isinstance(gene_length_bp, float) else str(gene_length_bp),
+            "Effective_Length_bp": f"{eff_length_bp:.2f}",
             "RPK": f"{rpk:.4f}", "FPK": f"{fpk:.4f}",
             "RPKG": f"{rpkg:.4f}", "FPKG": f"{fpkg:.4f}",
             "RPKM": rpkm_val, "FPKM": fpkm_val,
@@ -311,9 +338,9 @@ def write_summary_file(results, output_path, include_gene_length=False, include_
     try:
         with open(output_path, 'w', newline='') as f:
             header = ["AMR_Gene_Family", "ARO", "ARO_Name", "Drug_Class", "Resistance_Mechanism",
-                      "Read_Count", "Fragment_Count", "Lateral_Coverage_%"]
+                      "Read_Count", "Fragment_Count", "Lateral_Coverage_%", "Coverage_Depth"]
             if include_gene_length:
-                header.append("Gene_Length_bp")
+                header += ["Gene_Length_bp", "Effective_Length_bp"]
             header += ["RPK", "FPK", "RPKG", "FPKG", "RPKM", "FPKM",
                        "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "RPKPGC", "FPKPGC"]
             if include_map_cols:
@@ -332,7 +359,9 @@ def write_summary_file(results, output_path, include_gene_length=False, include_
                     "Read_Count": row_data["Read_Count"],
                     "Fragment_Count": row_data["Fragment_Count"],
                     "Lateral_Coverage_%": row_data["Lateral_Coverage_%"],
+                    "Coverage_Depth": row_data["Coverage_Depth"],
                     "Gene_Length_bp": row_data["Gene_Length_bp"],
+                    "Effective_Length_bp": row_data["Effective_Length_bp"],
                     "RPK": row_data["RPK"], "FPK": row_data["FPK"],
                     "RPKG": row_data["RPKG"], "FPKG": row_data["FPKG"],
                     "RPKM": row_data["RPKM"], "FPKM": row_data["FPKM"],
@@ -380,6 +409,7 @@ def main():
     aro_to_family, aro_to_length, aro_to_annotation = load_metadata(args.metadata)
     uscg_rpk, uscg_fpk = load_uscg_metrics(args.uscg_report)
     total_bases, total_reads, total_fragments = load_sequencing_metrics(args.total_bases_file)
+    eff_len_offset = load_effective_length_offset(args.total_bases_file)
     priors = load_priors(args.map_priors_file)
 
     hits_by_query = load_and_filter_hits(input_files_list, args.pid_cutoff, args.pid_type)
@@ -390,7 +420,7 @@ def main():
 
     detailed_normalised_results = calculate_normalised_metrics(
         hits_by_final_category, aro_to_length, aro_to_annotation,
-        uscg_rpk, uscg_fpk, total_bases, total_reads, total_fragments)
+        uscg_rpk, uscg_fpk, total_bases, total_reads, total_fragments, eff_len_offset)
     detailed_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_homscan_detailed.tsv")
     write_summary_file(detailed_normalised_results, detailed_output_path, include_gene_length=True, include_map_cols=False)
 
@@ -399,7 +429,7 @@ def main():
 
     clean_normalised_results = calculate_normalised_metrics(
         clean_hit_groups, aro_to_length, aro_to_annotation,
-        uscg_rpk, uscg_fpk, total_bases, total_reads, total_fragments)
+        uscg_rpk, uscg_fpk, total_bases, total_reads, total_fragments, eff_len_offset)
 
     final_abun = run_map_solver(detailed_normalised_results, args.map_metric_column, priors, args.map_base_prior, args.map_prior_strength)
 
