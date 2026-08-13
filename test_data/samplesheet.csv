@@ -1,4 +1,22 @@
-#sample,fastq_1,fastq_2,fastq_3
-FILE1,fastq/FILE1_r1.fastq.gz,fastq/FILE1_r2.fastq.gz
-FILE2,fastq/FILE2_r1.fastq.gz,fastq/FILE2_r2.fastq.gz,fastq/FILE4_r1.fastq.gz
-FILE3,fastq/FILE3_r1.fastq.gz,fastq/FILE3_r2.fastq.gz
+# ResScan batch samplesheet — demonstrates every supported input layout.
+#
+# Format:  sample_id, <files>
+#   ","  separates the mates of one sequencing run
+#   ";"  separates independent runs belonging to the same sample
+#
+# Every run of a given sample must have the same number of mates: a sample is
+# either paired-end throughout or single-end throughout. Paths are resolved
+# relative to the directory you launch from (absolute paths also work).
+# Lines beginning with "#" are ignored, so a sample can be commented out.
+
+# 1. Paired-end, single run — the usual case
+TEST_PE, test_data/fastq/SRR10842857_1.fastq.gz,test_data/fastq/SRR10842857_2.fastq.gz
+
+# 2. Single-end, single run
+TEST_SE, test_data/fastq/SRR10842855_1.fastq.gz
+
+# 3. Paired-end, two runs — one sample sequenced across two lanes/runs
+TEST_PE_MULTIRUN, test_data/fastq/SRR10842841_1.fastq.gz,test_data/fastq/SRR10842841_2.fastq.gz;test_data/fastq/SRR10842842_1.fastq.gz,test_data/fastq/SRR10842842_2.fastq.gz
+
+# 4. Single-end, two runs
+TEST_SE_MULTIRUN, test_data/fastq/SRR10842855_1.fastq.gz;test_data/fastq/SRR10842857_1.fastq.gz

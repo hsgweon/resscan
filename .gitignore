@@ -45,6 +45,11 @@ Thumbs.db
 *.tmp
 *.out
 
-# Large data files (keep test_data structure but ignore heavy files)
-test_data/**/*.fastq.gz
-test_data/**/*.fq.gz
+# Large data files. The small bundled test dataset under test_data/fastq/ is
+# deliberately tracked (see test_data/README.md); heavy sequence files
+# elsewhere are not.
+*.fastq
+*.fq
+/**/rawdata/*.fastq.gz
+/**/rawdata/*.fq.gz
+!test_data/fastq/*.fastq.gz
