@@ -17,25 +17,123 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
+def read_samplesheet_ids(samplesheet):
+    """
+    Sample IDs in samplesheet order.
+
+    Rows carry a variable number of fastq columns (single-end, paired-end,
+    multi-run), so the file is read line by line and only column 0 is taken;
+    pandas would require a fixed column count.
+    """
+    seen = set()
+    ids = []
+    with open(samplesheet, newline='') as fh:
+        for row in csv.reader(fh, skipinitialspace=True):
+            if not row or not row[0].strip() or row[0].strip().startswith('#'):
+                continue
+            sid = row[0].strip()
+            if sid.lower() == 'sample' or sid in seen:
+                continue
+            seen.add(sid)
+            ids.append(sid)
+    return ids
+
+
+PROVENANCE_KEYS = ["ResScan_Version", "Database_CARD_Version", "Database_Reference_FASTA_MD5",
+                   "Database_Manifest", "Param_homscan_min_aln_len", "Param_homscan_min_aln_frac",
+                   "Param_homscan_pid_cutoff", "Param_homscan_pid_type"]
+
+
+def read_sample_provenance(input_dir, sample_ids):
+    """Reads each sample's provenance file, where one was written."""
+    found = {}
+    for sid in sample_ids:
+        path = Path(input_dir) / sid / f"{sid}_results" / f"{sid}_results_provenance.txt"
+        if not path.exists():
+            continue
+        values = {}
+        try:
+            with open(path) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '\t' not in line:
+                        continue
+                    key, _, value = line.partition('\t')
+                    values[key.strip()] = value.strip()
+        except IOError:
+            continue
+        if values:
+            found[sid] = values
+    return found
+
+
+def write_aggregate_provenance(args, sample_ids, provenance):
+    """
+    Records what produced the aggregated tables, and whether the samples agree.
+
+    Samples processed with different ResScan versions or different reference
+    databases are not strictly comparable, and the aggregated matrices give no
+    hint of it, so any disagreement is reported here and on the console.
+    """
+    out_path = Path(args.output_dir) / f"{args.prefix}_provenance.txt"
+    conflicts = []
+    summary = {}
+    for key in PROVENANCE_KEYS:
+        seen = sorted({v[key] for v in provenance.values() if key in v})
+        if not seen:
+            continue
+        summary[key] = seen[0] if len(seen) == 1 else "MIXED: " + "; ".join(seen)
+        if len(seen) > 1:
+            conflicts.append(key)
+
+    missing = [s for s in sample_ids if s not in provenance]
+
+    try:
+        with open(out_path, 'w') as f:
+            f.write("# ResScan aggregation provenance.\n")
+            f.write("# Summarises the software and reference database behind the aggregated tables.\n")
+            f.write(f"Aggregation_Date\t{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Aggregation_Command\t{' '.join(sys.argv)}\n")
+            f.write(f"Samplesheet\t{args.samplesheet}\n")
+            f.write(f"Samples_In_Samplesheet\t{len(sample_ids)}\n")
+            f.write(f"Samples_With_Provenance\t{len(provenance)}\n")
+            if missing:
+                f.write(f"Samples_Without_Provenance\t{', '.join(missing)}\n")
+            for key, value in summary.items():
+                f.write(f"{key}\t{value}\n")
+            f.write(f"Consistent\t{'no' if conflicts else 'yes'}\n")
+            if conflicts:
+                f.write(f"Inconsistent_Fields\t{', '.join(conflicts)}\n")
+
+            f.write("\n# Per-sample detail\n")
+            f.write("Sample\t" + "\t".join(PROVENANCE_KEYS) + "\n")
+            for sid in sample_ids:
+                vals = provenance.get(sid, {})
+                f.write(sid + "\t" + "\t".join(vals.get(k, "NA") for k in PROVENANCE_KEYS) + "\n")
+    except IOError as e:
+        print(f"{Colors.WARNING}Could not write aggregation provenance: {e}{Colors.ENDC}")
+        return
+
+    if conflicts:
+        print(f"\n{Colors.FAIL}  WARNING: samples were not all produced the same way.{Colors.ENDC}")
+        for key in conflicts:
+            print(f"{Colors.WARNING}    {key}: {summary[key]}{Colors.ENDC}")
+        print(f"{Colors.WARNING}    Aggregated values may not be comparable across these samples."
+              f" See {out_path.name}.{Colors.ENDC}")
+    elif provenance:
+        v = summary.get("ResScan_Version", "unknown")
+        print(f"{Colors.GREEN}  - Provenance: all {len(provenance)} samples from ResScan {v}"
+              f" on one database.{Colors.ENDC}")
+    if missing:
+        print(f"{Colors.WARNING}  - No provenance file for {len(missing)} sample(s); "
+              f"they predate provenance recording.{Colors.ENDC}")
+
+
 def aggregate_samplesheet(args, report_type, suffix_map):
     print(f"{Colors.CYAN}Processing {report_type} reports...{Colors.ENDC}")
 
     try:
-        # Rows can have a variable number of fastq columns (single-end,
-        # paired-end, multi-lane, ...), so parse line-by-line and only take
-        # the sample ID (column 0) rather than loading the whole ragged
-        # table with pandas, which requires a fixed column count.
-        seen = set()
-        all_sample_ids = []
-        with open(args.samplesheet, newline='') as fh:
-            for row in csv.reader(fh, skipinitialspace=True):
-                if not row or not row[0].strip() or row[0].strip().startswith('#'):
-                    continue
-                sid = row[0].strip()
-                if sid.lower() == 'sample' or sid in seen:
-                    continue
-                seen.add(sid)
-                all_sample_ids.append(sid)
+        all_sample_ids = read_samplesheet_ids(args.samplesheet)
 
         if not all_sample_ids:
             print(f"{Colors.FAIL}No valid Sample IDs found in samplesheet.{Colors.ENDC}")
@@ -142,6 +240,10 @@ def main():
     types = ['homscan', 'varscan', 'uscg'] if args.type == 'all' else [args.type]
     for t in types:
         aggregate_samplesheet(args, t, suffix_map)
+
+    sample_ids = read_samplesheet_ids(args.samplesheet)
+    if sample_ids:
+        write_aggregate_provenance(args, sample_ids, read_sample_provenance(args.input_dir, sample_ids))
 
     print(f"\n{Colors.BLUE}Finished in {int(time.monotonic()-start_time)} seconds.{Colors.ENDC}")
 
