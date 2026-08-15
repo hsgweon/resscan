@@ -16,11 +16,11 @@ import glob
 import importlib.metadata
 from importlib import resources
 try:
-    from resscan.utils import BColors as Colors
+    from resscan.utils import BColors as Colors, describe_database
 except ImportError:
-    from utils import BColors as Colors
+    from utils import BColors as Colors, describe_database
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter to add colours to log messages for console output."""
@@ -287,8 +287,10 @@ def main():
     # Write Run Details
     run_details_file = log_dir / f"{output_prefix_name}_run_details.txt"
     print(f"{Colors.BLUE}{Colors.BOLD}--- resscan pipeline starting (v{__version__}) ---{Colors.ENDC}")
+    db_info = describe_database(card_db_dir, fasta_path=db_card, metadata_path=db_card_metadata)
+
     with open(run_details_file, "w") as f:
-        f.write(f"AMRscan Pipeline Run Details\n" + "-"*30 + "\n")
+        f.write(f"ResScan Pipeline Run Details\n" + "-"*30 + "\n")
         f.write(f"Pipeline Version: {__version__}\n")
         f.write(f"Date and Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Command-line: {' '.join(sys.argv)}\n\n")
@@ -300,6 +302,31 @@ def main():
         f.write(f"CARD FASTA: {db_card}\n")
         f.write(f"CARD Metadata: {db_card_metadata}\n")
         f.write(f"SCG FASTA: {db_scg}\n")
+        for key, value in db_info.items():
+            f.write(f"{key}: {value}\n")
+
+    # A compact provenance record, written beside the result tables rather than
+    # inside logs/, so that it travels with the results when they are shared.
+    provenance_file = main_output_dir / f"{output_prefix_name}_provenance.txt"
+    with open(provenance_file, "w") as f:
+        f.write("# ResScan run provenance. Records the software and reference database\n")
+        f.write("# that produced the result tables in this directory.\n")
+        f.write(f"ResScan_Version\t{__version__}\n")
+        f.write(f"Run_Date\t{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Command_Line\t{' '.join(sys.argv)}\n")
+        f.write(f"Python_Version\t{platform.python_version()}\n")
+        for tool, version in get_tool_versions().items():
+            f.write(f"{tool}_Version\t{version}\n")
+        for key, value in db_info.items():
+            f.write(f"Database_{key}\t{value}\n")
+        f.write(f"SCG_Database\t{db_scg}\n")
+        f.write(f"Param_homscan_min_aln_len\t{args.homscan_min_aln_len}\n")
+        f.write(f"Param_homscan_min_aln_frac\t{args.homscan_min_aln_frac}\n")
+        f.write(f"Param_homscan_pid_cutoff\t{args.homscan_pid_cutoff}\n")
+        f.write(f"Param_homscan_pid_type\t{args.homscan_pid_type}\n")
+        f.write(f"Param_varscan_pid_cutoff\t{args.varscan_pid_cutoff}\n")
+        f.write(f"Param_consensus_cutoff\t{args.consensus_cutoff}\n")
+        f.write(f"Param_map_metric_column\t{args.map_metric_column}\n")
 
     # Define all sub-directories and script paths
     src_dir = Path(__file__).parent.resolve()

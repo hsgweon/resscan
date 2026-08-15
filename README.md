@@ -1,4 +1,4 @@
-# ResScan v.1.1.0
+# ResScan v.1.2.0
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
@@ -418,6 +418,60 @@ resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
 ```
 
 ## Output Files
+
+### Provenance: what produced these results
+
+Every run writes **`<prefix>_provenance.txt`** into the main output directory, beside the
+result tables rather than inside `logs/`, so it travels with the results when they are
+shared. It is a plain two-column TSV recording the ResScan version, the run date and
+command line, the aligner versions, the reference database identity, and the analysis
+parameters that affect the numbers:
+
+```
+ResScan_Version              1.2.0
+Run_Date                     2026-08-15 09:13:45
+Command_Line                 resscan -i sample_R1.fq.gz,sample_R2.fq.gz -o sample --card resscan_CARD_v4.0.1
+BWA_Version                  0.7.19-r1273
+Database_CARD_Version        4.0.1
+Database_Reference_FASTA_MD5 f4db66b28d45b6cab4a0c57fb95f0174
+Param_homscan_min_aln_frac   0.5
+Param_homscan_pid_cutoff     0.95
+```
+
+The same information is also appended to `logs/<prefix>_run_details.txt`. The file is
+written before analysis begins, so it is present even if a run fails part-way.
+
+**Database identity.** `resscan_build_db` records what a database was built from in
+**`resscan_DB_CARD_INFO.txt`** inside the database directory: the CARD release (read from
+`card.json` when the raw download provides it), the build date, the ResScan version that
+built it, the sequence count, and MD5 checksums of the reference FASTA and metadata.
+
+The checksums are the part that matters for reproducibility. A directory name is chosen by
+the user and can be reused or renamed, whereas the checksum identifies the reference
+sequences themselves — so two sets of results can be confirmed to have used the same
+database even when no CARD version was ever recorded. Databases built before this manifest
+existed are still identified: if no manifest is found, ResScan checksums the reference
+files at run time and reports those instead, with `Database_Manifest` noting that the
+manifest was absent. **Rebuilding an existing database is not required**, though rebuilding
+adds the readable CARD release alongside the checksum.
+
+**Batch runs.** `resscan_batch` needs no extra options: each sample's results directory is
+published whole, so `<sample>_results_provenance.txt` appears alongside that sample's tables.
+
+`resscan_aggregate` additionally writes **`<prefix>_provenance.txt`** next to the aggregated
+matrices, summarising the ResScan version, database identity and analysis parameters behind
+them, with a per-sample breakdown. It compares those values across samples and **warns when
+they disagree**:
+
+```
+  WARNING: samples were not all produced the same way.
+    Database_CARD_Version: MIXED: 3.2.9; 4.0.1
+    Aggregated values may not be comparable across these samples.
+```
+
+This matters because an aggregated matrix looks equally authoritative whether or not its
+samples were processed against the same reference. Samples run before provenance recording
+existed are listed under `Samples_Without_Provenance` rather than silently ignored.
 
 Alongside the HomScan and VarScan reports, each run writes `*_uscg.tsv`, the per-gene
 single-copy-marker table whose `ALL_USCGs` row is the per-cell normalisation denominator.

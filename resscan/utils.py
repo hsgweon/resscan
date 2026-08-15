@@ -146,3 +146,80 @@ def load_effective_length_offset(filepath):
     except (IOError, ValueError, IndexError):
         pass
     return 0.0
+
+
+DB_INFO_FILENAME = "resscan_DB_CARD_INFO.txt"
+
+
+def md5_of_file(path, chunk_size=1 << 20):
+    """MD5 checksum of a file, or None if it cannot be read."""
+    import hashlib
+    try:
+        h = hashlib.md5()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(chunk_size), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except (IOError, OSError):
+        return None
+
+
+def read_card_version(input_dir):
+    """
+    Best-effort CARD release version, read from card.json in the raw download.
+
+    CARD ships a '_version' key in that file. It is absent from older releases
+    and from downloads that omit card.json, so a missing value is not an error.
+    """
+    import json
+    path = os.path.join(input_dir, "card.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for key in ("_version", "version", "_CARD_version"):
+                if data.get(key):
+                    return str(data[key])
+    except (IOError, ValueError):
+        pass
+    return None
+
+
+def describe_database(db_dir, fasta_path=None, metadata_path=None):
+    """
+    Identifies the reference database in use.
+
+    Prefers the manifest written at build time, which carries the CARD release
+    and sequence counts. Databases built before manifests existed have none, so
+    the files are checksummed directly instead: a database is then still
+    identified unambiguously, just without a human-readable version.
+    """
+    info = {}
+    manifest = os.path.join(str(db_dir), DB_INFO_FILENAME)
+    if os.path.exists(manifest):
+        try:
+            with open(manifest, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '\t' not in line:
+                        continue
+                    key, _, value = line.partition('\t')
+                    info[key.strip()] = value.strip()
+            info["Manifest"] = "present"
+        except IOError:
+            info["Manifest"] = "unreadable"
+    else:
+        info["Manifest"] = "absent (database predates build manifests; identified by checksum)"
+
+    info.setdefault("Directory", str(db_dir))
+    for label, path in (("Reference_FASTA", fasta_path), ("Reference_Metadata", metadata_path)):
+        if not path:
+            continue
+        key = f"{label}_MD5"
+        if key not in info:
+            digest = md5_of_file(str(path))
+            if digest:
+                info[key] = digest
+    return info

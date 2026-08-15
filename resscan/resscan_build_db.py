@@ -13,9 +13,9 @@ from collections import defaultdict
 
 # --- BColors Class ---
 try:
-    from resscan.utils import BColors
+    from resscan.utils import BColors, md5_of_file, read_card_version, DB_INFO_FILENAME
 except ImportError:
-    from utils import BColors
+    from utils import BColors, md5_of_file, read_card_version, DB_INFO_FILENAME
 
 # --- Global Constants ---
 class ResScanFiles:
@@ -57,6 +57,7 @@ class Config:
         self.path_protein_overexpression_model = None
         self.path_rRNA_gene_variant_model = None
         self.path_aro_index = None
+        self.input_dir_name = None
         self.output_dir_name = None
         self.overwrite_outputs = False
         self.keep_intermediate = False 
@@ -264,7 +265,8 @@ def scan_input_directory(input_dir):
         raise RuntimeError(f"Error: Input directory does not exist: {input_dir}")
 
     config = Config()
-    
+    config.input_dir_name = input_dir
+
     def get_path(key):
         filename = ResScanFiles.EXPECTED_INPUTS[key]
         path = os.path.join(input_dir, filename)
@@ -892,6 +894,78 @@ def run_second_stage(config, db_dir, sequence_to_nucleotide_map):
     print(BColors.green("--- Stage 2 Complete ---"))
     logging.info("Stage 2 Complete")
 
+def write_db_info_file(config, db_dir):
+    """
+    Records what this database was built from.
+
+    Without it a result can only be traced back to a directory name, which the
+    user chooses and may reuse. The checksums identify the reference files
+    themselves, so two runs can be compared even when the CARD release is not
+    recorded anywhere.
+    """
+    info_path = os.path.join(db_dir, DB_INFO_FILENAME)
+    fasta_name = format_output_filename(ResScanFiles.Stage2.NR_FASTA_NUC, ".fasta")
+    meta_name = format_output_filename(ResScanFiles.Stage2.NR_METADATA, ".txt")
+    fasta_path = os.path.join(db_dir, fasta_name)
+    meta_path = os.path.join(db_dir, meta_name)
+
+    try:
+        builder_version = _get_resscan_version()
+        card_version = read_card_version(config.input_dir_name) if getattr(config, "input_dir_name", None) else None
+
+        rows = [
+            ("Built_By", f"resscan_build_db {builder_version}"),
+            ("Build_Date", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            ("Source_Directory", str(getattr(config, "input_dir_name", "N/A"))),
+            ("CARD_Version", card_version or "not recorded (card.json absent from the source directory)"),
+            ("Reference_FASTA", fasta_name),
+            ("Reference_Metadata", meta_name),
+        ]
+        digest = md5_of_file(fasta_path)
+        if digest:
+            rows.append(("Reference_FASTA_MD5", digest))
+        digest = md5_of_file(meta_path)
+        if digest:
+            rows.append(("Reference_Metadata_MD5", digest))
+        try:
+            with open(meta_path) as f:
+                rows.append(("Reference_Sequence_Count", str(max(0, sum(1 for _ in f) - 1))))
+        except IOError:
+            pass
+
+        with open(info_path, "w") as f:
+            f.write("# ResScan reference database manifest.\n")
+            f.write("# Recorded by resscan_build_db and reported by every run that uses this database.\n")
+            for key, value in rows:
+                f.write(f"{key}\t{value}\n")
+        logging.info(f"Wrote database manifest: {DB_INFO_FILENAME}")
+        print(BColors.green(f"--- Wrote database manifest: {DB_INFO_FILENAME} ---"))
+    except Exception as e:
+        # Provenance must never be the reason a database build fails.
+        logging.warning(f"Could not write database manifest: {e}")
+        print(BColors.yellow(f"Warning: could not write database manifest: {e}"))
+
+
+def _get_resscan_version():
+    """Version of the ResScan installation performing the build."""
+    try:
+        from resscan.resscan import __version__
+        return __version__
+    except Exception:
+        pass
+    try:
+        # Sibling-module import, matching how the other scripts fall back.
+        from resscan import __version__
+        return __version__
+    except Exception:
+        pass
+    try:
+        import importlib.metadata
+        return importlib.metadata.version("resscan")
+    except Exception:
+        return "unknown"
+
+
 def write_readme_file(config, db_dir):
     readme_path = os.path.join(db_dir, format_output_filename(ResScanFiles.Stage1.README_SUFFIX, ".txt"))
     try:
@@ -1030,6 +1104,7 @@ def main():
         run_first_stage(config, db_dir, sequence_to_nucleotide_map)
         run_second_stage(config, db_dir, sequence_to_nucleotide_map)
         write_readme_file(config, db_dir)
+        write_db_info_file(config, db_dir)
         write_html_ignored_report(db_dir)
         
         if not config.keep_intermediate:
