@@ -253,9 +253,11 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, m
                 if debug_writer:
                     debug_row['aln_len'] = aln_len
 
-                # SEQ is absent from hard-clipped records, so take the longer of
-                # the stored sequence and the CIGAR-derived length.
-                read_length = max(len(actual_seq), get_read_length_from_cigar(cigar))
+                # SEQ carries the full read except on hard-clipped records, which
+                # are the only case needing the (more costly) CIGAR reconstruction.
+                read_length = len(actual_seq)
+                if 'H' in cigar:
+                    read_length = max(read_length, get_read_length_from_cigar(cigar))
                 required_aln_len = required_alignment_length(read_length, min_aln_len, min_aln_frac)
 
                 if aln_len < required_aln_len:

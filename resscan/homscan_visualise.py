@@ -118,6 +118,52 @@ def get_color_for_pid(pid):
     else:
         return "#ffcc00" # Goldenrod for < 100%
 
+class _LanePacker:
+    """
+    Packs read rectangles into display lanes.
+
+    Each read is placed in the lowest-numbered lane whose previous read has
+    already ended, which is what determines the stacked appearance of the plot.
+    Searching that lane by scanning the list is quadratic in the number of reads,
+    and a deeply covered gene can carry tens of thousands, so the lane ends are
+    held in a segment tree over their minimum and the search descends it instead.
+    The lane chosen is identical to the one a left-to-right scan would pick.
+
+    Lane ends are initialised to 0, so an unused lane always reads as free and is
+    taken only once every lower-numbered lane is occupied.
+    """
+
+    def __init__(self, capacity):
+        size = 1
+        while size < max(1, capacity):
+            size *= 2
+        self._size = size
+        self._min_end = [0] * (2 * size)
+        self._lane_count = 0
+
+    def assign(self, start, end):
+        node = 1
+        while node < self._size:
+            node *= 2
+            if self._min_end[node] > start:      # left subtree full, go right
+                node += 1
+        lane = node - self._size
+
+        if lane >= self._lane_count:
+            self._lane_count = lane + 1
+
+        node = lane + self._size
+        self._min_end[node] = end
+        node //= 2
+        while node:
+            self._min_end[node] = min(self._min_end[2 * node], self._min_end[2 * node + 1])
+            node //= 2
+        return lane
+
+    def lane_count(self):
+        return self._lane_count if self._lane_count else 1
+
+
 def generate_single_aro_plot_html(aro_id, ref_seq_len, hits, original_read_count, pid_type):
     """Generates the HTML for a single ARO's plot with dark theme."""
     stats = {
@@ -128,26 +174,17 @@ def generate_single_aro_plot_html(aro_id, ref_seq_len, hits, original_read_count
 
     hits_for_initial_layout = sorted(hits, key=lambda x: float(x['nucleotide_pid']), reverse=True)
     rect_height, gap = 8, 2
-    lanes = [0]
-    
+
+    packer = _LanePacker(len(hits_for_initial_layout))
     js_hits_data = []
     for hit in hits_for_initial_layout:
         start = int(hit['position_on_ref'])
         length = int(hit['nucleotide_denominator'])
-        assigned_lane = -1
-        for i, end_pos in enumerate(lanes):
-            if start >= end_pos:
-                assigned_lane = i
-                break
-        if assigned_lane == -1:
-            assigned_lane = len(lanes)
-            lanes.append(0)
-        lanes[assigned_lane] = start + length
         hit_copy = hit.copy()
-        hit_copy['draw_lane'] = assigned_lane
+        hit_copy['draw_lane'] = packer.assign(start, start + length)
         js_hits_data.append(hit_copy)
 
-    max_lanes = len(lanes) if lanes else 1
+    max_lanes = packer.lane_count()
     svg_elements, axis_elements = [], []
     svg_filter_defs = """<defs><filter id="goldGlow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#FFD700" flood-opacity="0.8"/></filter></defs>"""
 
