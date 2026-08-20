@@ -1,4 +1,4 @@
-# ResScan v.1.2.0
+# ResScan v.1.2.1
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
@@ -169,6 +169,21 @@ resscan_batch --samplesheet test_data/samplesheet.csv \
 See [`test_data/README.md`](test_data/README.md) for what the dataset contains and what to expect. Note that AMR reads in it are deliberately over-represented, so the abundances it reports are not biologically meaningful.
 
 **Input format.** `-i` uses commas to separate mates within a run and semicolons to separate multiple sequencing runs from the same sample. ResScan derives the fragment count from the mate structure automatically.
+
+Whitespace around the separators is ignored, so entries may be spaced out for readability:
+`sampleA, r1.fq.gz, r2.fq.gz ; r3.fq.gz, r4.fq.gz` is read exactly as the unspaced form, in both `-i` and samplesheets. Input files are also checked before analysis begins, so a mistyped path is reported immediately rather than when the aligner reaches it.
+
+A run therefore has **one file (single-end) or two (paired-end)** — there is no third mate. Listing more than two files in a single comma-separated group is rejected before any analysis starts, because ResScan cannot tell from the reads alone that the count is wrong: it would take it at face value and derive the wrong number of fragments, silently distorting every fragment-normalised metric. The commonest cause is a sample sequenced across several lanes or flowcells whose files were joined with `,` instead of `;`, and the error names the files and prints the corrected command:
+
+```
+Error: run 1 lists 4 files. A sequencing run has one mate (single-end) or
+two (paired-end); there is no third mate.
+
+These look like 2 separate sequencing runs of the same sample, which must
+be separated by ';' rather than ','.
+Try instead:
+  -i 'S_L5_1.fq.gz,S_L5_2.fq.gz;S_L7_1.fq.gz,S_L7_2.fq.gz'
+```
 
 Single-end:
 ```bash

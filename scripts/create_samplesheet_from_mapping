@@ -3,8 +3,45 @@
 # resscan/scripts/create_samplesheet_from_mapping
 import argparse
 import os
+import re
 import sys
 from collections import defaultdict
+
+FASTQ_EXTENSIONS = ('.fastq.gz', '.fq.gz', '.fastq', '.fq')
+
+# Greedy stem so the mate marker matches the LAST candidate in the name. A
+# non-greedy stem would match the "_R1" inside a sample name such as CH_SR1_DSS.
+MATE_SUFFIX = re.compile(r'^(?P<stem>.+)[._-]R?(?P<mate>[12])(?:_001)?$')
+
+
+def split_run_and_mate(filename):
+    """
+    Splits a FASTQ filename into its run identity and mate number.
+
+    One prefix can match files from several sequencing runs of the same sample,
+    typically different lanes or flowcells. Those are separate runs and must be
+    emitted as such: the mate count is what ResScan uses to derive fragments
+    from reads, so folding four files into one run halves the fragment count.
+    """
+    base = filename
+    for ext in FASTQ_EXTENSIONS:
+        if base.endswith(ext):
+            base = base[:-len(ext)]
+            break
+    match = MATE_SUFFIX.match(base)
+    if match:
+        return match.group('stem'), int(match.group('mate'))
+    return base, 1          # no mate marker: treat as a single-end run
+
+
+def group_into_runs(paths):
+    """Groups matched files into runs, ordered by run then by mate."""
+    runs = {}
+    for path in paths:
+        stem, mate = split_run_and_mate(os.path.basename(path))
+        runs.setdefault(stem, []).append((mate, path))
+    return [[p for _, p in sorted(mates)] for _, mates in sorted(runs.items())]
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -52,7 +89,7 @@ def main():
 
     all_files = {}
     for fname in sorted(os.listdir(args.fastq_dir)):
-        if fname.endswith(('.fastq.gz', '.fq.gz', '.fastq', '.fq')):
+        if fname.endswith(FASTQ_EXTENSIONS):
             all_files[fname] = os.path.abspath(os.path.join(args.fastq_dir, fname))
 
     rows = []
@@ -66,8 +103,9 @@ def main():
             if not matched:
                 print(f"Warning: No files found for prefix '{prefix}' (sample '{sample_id}'). Skipping run.", file=sys.stderr)
                 continue
-            run_groups.append(matched)
-            mate_counts.append(len(matched))
+            for run in group_into_runs(matched):
+                run_groups.append(run)
+                mate_counts.append(len(run))
 
         if not run_groups:
             print(f"Warning: No files found for any prefix under sample '{sample_id}'. Skipping sample.", file=sys.stderr)

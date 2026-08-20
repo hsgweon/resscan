@@ -20,7 +20,7 @@ try:
 except ImportError:
     from utils import BColors as Colors, describe_database
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter to add colours to log messages for console output."""
@@ -154,6 +154,95 @@ def get_data_path(filename):
     with resources.as_file(resources.files('resscan').joinpath(filename)) as path:
         return path
 
+MATE_SUFFIX = re.compile(r'^(?P<stem>.+)[._-]R?(?P<mate>[12])(?:_001)?$')
+FASTQ_EXTENSIONS = ('.fastq.gz', '.fq.gz', '.fastq', '.fq')
+
+
+def run_stem_of(path):
+    """
+    Run identity of a FASTQ file: its name with the mate marker removed.
+
+    Files sharing a stem are the mates of one sequencing run. The stem is
+    matched greedily so the marker binds to the last candidate in the name,
+    otherwise a sample called something like CH_SR1_DSS matches on its own
+    embedded '_R1'.
+    """
+    base = os.path.basename(str(path))
+    for ext in FASTQ_EXTENSIONS:
+        if base.endswith(ext):
+            base = base[:-len(ext)]
+            break
+    match = MATE_SUFFIX.match(base)
+    return match.group('stem') if match else base
+
+
+def validate_run_structure(parsed_runs):
+    """
+    Rejects input that cannot describe real sequencing runs.
+
+    A DNA fragment is read from one end or from both, so a run has one mate or
+    two; there is no third mate. A larger count means several runs were passed
+    as one, which ResScan cannot detect from the reads themselves: it would
+    take the count at face value and derive the wrong number of fragments,
+    silently distorting every fragment-normalised metric.
+    """
+    for index, run in enumerate(parsed_runs, start=1):
+        if len(run) <= 2:
+            continue
+
+        stems = []
+        for f in run:
+            stem = run_stem_of(f)
+            if stem not in stems:
+                stems.append(stem)
+
+        print(f"{Colors.FAIL}Error: run {index} lists {len(run)} files. A sequencing run has "
+              f"one mate (single-end) or two (paired-end); there is no third mate.{Colors.ENDC}")
+        for f in run:
+            print(f"{Colors.FAIL}         {f}{Colors.ENDC}")
+
+        if len(stems) > 1:
+            print(f"{Colors.WARNING}\nThese look like {len(stems)} separate sequencing runs of the same "
+                  f"sample, which must be separated by ';' rather than ','.{Colors.ENDC}")
+            groups = []
+            for stem in stems:
+                groups.append(",".join(str(f) for f in run if run_stem_of(f) == stem))
+            print(f"{Colors.WARNING}Try instead:{Colors.ENDC}\n  -i '" + ";".join(groups) + "'")
+        else:
+            print(f"{Colors.WARNING}\nAll {len(run)} files appear to belong to one run. If some are "
+                  f"unpaired or singleton reads, they cannot be counted as mates of a pair; "
+                  f"quantify them separately.{Colors.ENDC}")
+        sys.exit(1)
+
+
+def validate_inputs_exist(parsed_runs):
+    """
+    Checks every input file up front, reporting all problems at once.
+
+    Without this the first sign of a mistyped path is BWA failing, after the
+    reference index has been built; in a large batch that is a slow way to
+    learn about a typo, and every remaining bad path has to be found one run
+    at a time.
+    """
+    missing, empty = [], []
+    for run in parsed_runs:
+        for f in run:
+            path = Path(f)
+            if not path.is_file():
+                missing.append(f)
+            elif path.stat().st_size == 0:
+                empty.append(f)
+
+    if missing or empty:
+        for f in missing:
+            print(f"{Colors.FAIL}Error: input file not found: {f}{Colors.ENDC}")
+        for f in empty:
+            print(f"{Colors.FAIL}Error: input file is empty: {f}{Colors.ENDC}")
+        print(f"{Colors.WARNING}\nCheck the paths above; they are resolved relative to the "
+              f"directory you launched from.{Colors.ENDC}")
+        sys.exit(1)
+
+
 def main():
     start_time = time.monotonic()
 
@@ -206,6 +295,8 @@ def main():
     # Setup Paths
     runs = [r.strip() for r in args.input_fastqs.split(';') if r.strip()]
     parsed_runs = [[m.strip() for m in run.split(',') if m.strip()] for run in runs]
+    validate_run_structure(parsed_runs)
+    validate_inputs_exist(parsed_runs)
     mate_counts = [len(r) for r in parsed_runs]
     if len(set(mate_counts)) > 1:
         print(f"{Colors.FAIL}Error: All runs must have the same number of mates. Found: {mate_counts}{Colors.ENDC}")
