@@ -121,6 +121,74 @@ def get_nm_tag(optional_fields):
             except (ValueError, IndexError): return None
     return None
 
+def get_as_tag(optional_fields):
+    for field in optional_fields:
+        if field.startswith('AS:i:'):
+            try: return int(field[5:])
+            except (ValueError, IndexError): return None
+    return None
+
+_COMPLEMENT = str.maketrans('ACGTNacgtn', 'TGCANtgcan')
+
+def reverse_complement(seq):
+    return seq.translate(_COMPLEMENT)[::-1]
+
+def iter_read_groups(sam_handle):
+    """
+    Yields the SAM records of one read at a time, as lists of split fields.
+
+    An aligner writes all alignments of a read on consecutive lines, so
+    grouping consecutive records by QNAME recovers them without holding the
+    file in memory. The input must therefore be in the aligner's original
+    (name-grouped) order, which is how ResScan's mapping step leaves it.
+    """
+    group, current = [], None
+    for line in sam_handle:
+        if line.startswith('@'): continue
+        fields = line.rstrip('\n').split('\t')
+        if len(fields) < 11: continue
+        if fields[0] != current and group:
+            yield group
+            group = []
+        current = fields[0]
+        group.append(fields)
+    if group:
+        yield group
+
+def primary_sequence_of(group):
+    """
+    Returns (sequence, is_reverse) of the read's primary alignment, or (None, None).
+
+    Only the primary record carries the complete read. Secondary records carry
+    '*' in SEQ, and supplementary records are hard-clipped, so neither can be
+    used on its own to inspect a codon.
+    """
+    for fields in group:
+        try:
+            flag = int(fields[1])
+        except ValueError:
+            continue
+        if not (flag & 0x900) and fields[9] != '*':
+            return fields[9], bool(flag & 0x10)
+    return None, None
+
+def sequence_for_record(fields, primary_seq, primary_is_reverse):
+    """
+    The full-length read in the orientation of this alignment record.
+
+    SAM stores SEQ on the forward reference strand, so an alignment on the
+    opposite strand to the primary needs the primary's SEQ reverse-complemented.
+    With the complete read in hand, hard clips are walked exactly like soft clips.
+    """
+    flag = int(fields[1])
+    if primary_seq is not None:
+        if bool(flag & 0x10) == primary_is_reverse:
+            return primary_seq
+        return reverse_complement(primary_seq)
+    if fields[9] != '*' and 'H' not in fields[5]:
+        return fields[9]
+    return None
+
 def get_reference_span_from_cigar(cigar):
     parts = re.findall(r'(\d+)([MDN=X])', cigar)
     return sum(int(num) for num, op in parts)
@@ -131,9 +199,9 @@ def is_valid_alignment(cigar, pos, aln_len, target_len):
 
     cigar_ops = re.findall(r'(\d+)([A-Z])', cigar)
     if cigar_ops[0][1] in ('S', 'H') and len(cigar_ops) == 2:
-        if (pos + aln_len - 1) == target_len: return True
-    if cigar_ops[-1][1] in ('S', 'H') and len(cigar_ops) == 2:
         if pos == 1: return True
+    if cigar_ops[-1][1] in ('S', 'H') and len(cigar_ops) == 2:
+        if (pos + aln_len - 1) == target_len: return True
     if cigar_ops[0][1] in ('S', 'H') and cigar_ops[-1][1] in ('S', 'H'):
         if pos == 1 and (pos + aln_len - 1) == target_len: return True
 
@@ -260,7 +328,7 @@ def format_fullseq_alignment_for_output(cigar, full_query_seq, full_ref_seq, mut
                 gapped_ref_block += full_ref_seq[ref_cursor]
                 gapped_que_block += '-'
                 ref_cursor += 1
-        elif op == 'S':
+        elif op in ('S', 'H'):
             query_cursor += length
 
     ref_prefix = full_ref_seq[:sam_pos - 1]
@@ -299,90 +367,122 @@ def process_sam_files_for_variants(sam_files, db_sequences, mutation_db, output_
     for file_idx, sam_path in enumerate(sam_files):
         print(BColors.cyan(f"--- Analyzing: {os.path.basename(sam_path)} ---"))
         with open(sam_path, 'r') as f_in:
-            for line in f_in:
-                if line.startswith('@'): continue
-                
-                try:
-                    fields = line.strip().split('\t')
-                    if len(fields) < 10 or fields[9] == '*': continue
+            for group in iter_read_groups(f_in):
+                # Every alignment of the read is examined, not only the primary.
+                # Mutation sets that share a substitution (S83L, S83L+D87N, ...)
+                # have separate references, and a read that covers only the
+                # shared position matches them all equally well. The aligner
+                # then picks its primary arbitrarily; judging the read on that
+                # record alone would discard valid evidence for the
+                # single-substitution model whenever the primary happened to be
+                # a combination the read cannot fully cover.
+                primary_seq, primary_is_reverse = primary_sequence_of(group)
+                suffixed_qname = f"{group[0][0]}_{file_idx + 1}"
+                candidates = []
 
-                    rname = fields[2]
-                    if rname == '*': continue
+                for fields in group:
+                    try:
+                        rname = fields[2]
+                        if rname == '*': continue
 
-                    mutation_info = mutation_db.get(rname)
-                    if not mutation_info: continue
-                    
-                    if mutation_info['type'] not in allowed_variant_types: continue
+                        mutation_info = mutation_db.get(rname)
+                        if not mutation_info: continue
 
-                    original_qname = fields[0]
-                    suffixed_qname = f"{original_qname}_{file_idx + 1}"
-                    
-                    debug_row = None
-                    if debug_mode:
-                        debug_row = {
-                            'query_id': suffixed_qname, 'ARO_matched': rname,
-                            'status': 'N/A', 'reason': 'N/A', 'details': 'N/A', 'nucleotide_pid': 'N/A'
-                        }
+                        if mutation_info['type'] not in allowed_variant_types: continue
 
-                    cigar = fields[5]
-                    pos = int(fields[3])
-                    ref_seq = db_sequences.get(rname)
-                    
-                    ref_span = get_reference_span_from_cigar(cigar)
-
-                    if ref_span < min_aln_len:
+                        debug_row = None
                         if debug_mode:
-                            debug_row['status'] = 'Rejected'
-                            debug_row['reason'] = 'Alignment length below cutoff'
-                            debug_row['details'] = f"Reference span {ref_span} < {min_aln_len}"
-                            debug_writer.writerow(debug_row)
-                        continue
+                            debug_row = {
+                                'query_id': suffixed_qname, 'ARO_matched': rname,
+                                'status': 'N/A', 'reason': 'N/A', 'details': 'N/A', 'nucleotide_pid': 'N/A'
+                            }
 
-                    if require_full_read_aln:
-                        target_length = len(ref_seq) if ref_seq else 0
-                        if not is_valid_alignment(cigar, pos, ref_span, target_length):
+                        cigar = fields[5]
+                        pos = int(fields[3])
+                        ref_seq = db_sequences.get(rname)
+                        if not ref_seq: continue
+
+                        query_seq = sequence_for_record(fields, primary_seq, primary_is_reverse)
+                        if query_seq is None: continue
+
+                        ref_span = get_reference_span_from_cigar(cigar)
+
+                        if ref_span < min_aln_len:
                             if debug_mode:
                                 debug_row['status'] = 'Rejected'
-                                debug_row['reason'] = 'Does not meet full read alignment criteria'
-                                debug_row['details'] = f"CIGAR: {cigar}, POS: {pos}, REF_SPAN: {ref_span}, REF_LEN: {target_length}"
+                                debug_row['reason'] = 'Alignment length below cutoff'
+                                debug_row['details'] = f"Reference span {ref_span} < {min_aln_len}"
                                 debug_writer.writerow(debug_row)
                             continue
 
-                    optional_fields = fields[11:]
-                    num_mismatches = get_nm_tag(optional_fields)
-                    if num_mismatches is None: continue
+                        if require_full_read_aln:
+                            target_length = len(ref_seq)
+                            if not is_valid_alignment(cigar, pos, ref_span, target_length):
+                                if debug_mode:
+                                    debug_row['status'] = 'Rejected'
+                                    debug_row['reason'] = 'Does not meet full read alignment criteria'
+                                    debug_row['details'] = f"CIGAR: {cigar}, POS: {pos}, REF_SPAN: {ref_span}, REF_LEN: {target_length}"
+                                    debug_writer.writerow(debug_row)
+                                continue
 
-                    nuc_pid = ((ref_span - num_mismatches) / ref_span) * 100.0 if ref_span > 0 else 0.0
-                    if debug_mode: debug_row['nucleotide_pid'] = f"{nuc_pid:.2f}"
+                        optional_fields = fields[11:]
+                        num_mismatches = get_nm_tag(optional_fields)
+                        if num_mismatches is None: continue
 
-                    query_seq = fields[9]
+                        nuc_pid = ((ref_span - num_mismatches) / ref_span) * 100.0 if ref_span > 0 else 0.0
+                        if debug_mode: debug_row['nucleotide_pid'] = f"{nuc_pid:.2f}"
 
-                    if ref_seq:
                         check_result = check_mutation_presence(cigar, pos, query_seq, ref_seq, mutation_info)
-                        
+
                         if check_result['confirmed']:
-                            confirmed_hits.append({
-                                'query_id': suffixed_qname,
-                                'ARO_matched': rname,
-                                'mutation': mutation_info['full_mutation_str'],
-                                'nucleotide_pid': f"{nuc_pid:.2f}",
-                                'alignment_length': ref_span,
-                                'position_on_ref': pos
+                            alignment_score = get_as_tag(optional_fields)
+                            candidates.append({
+                                'rank': (alignment_score if alignment_score is not None else -1,
+                                         len(mutation_info['mutations']), nuc_pid),
+                                'hit': {
+                                    'query_id': suffixed_qname,
+                                    'ARO_matched': rname,
+                                    'mutation': mutation_info['full_mutation_str'],
+                                    'nucleotide_pid': f"{nuc_pid:.2f}",
+                                    'alignment_length': ref_span,
+                                    'position_on_ref': pos
+                                },
+                                'alignment_args': (cigar, query_seq, ref_seq, mutation_info, pos, suffixed_qname, rname),
+                                'debug_row': debug_row,
+                                'check_result': check_result,
                             })
-                            alignment_str = format_fullseq_alignment_for_output(
-                                cigar, query_seq, ref_seq, mutation_info, pos, suffixed_qname, rname
-                            )
-                            align_file.write(alignment_str)
-                        
-                        if debug_mode:
-                            debug_row['status'] = 'Accepted' if check_result['confirmed'] else 'Rejected'
+                        elif debug_mode:
+                            debug_row['status'] = 'Rejected'
                             debug_row['reason'] = check_result['reason']
                             debug_row['details'] = check_result['details']
                             debug_writer.writerow(debug_row)
 
-                except (IndexError, ValueError) as e:
+                    except (IndexError, ValueError) as e:
+                        continue
+
+                if not candidates:
                     continue
-    
+
+                # A read is counted once. Among the models it confirms, it goes
+                # to the best-scoring alignment; a tie goes to the model with
+                # more substitutions (the more specific genotype), then to the
+                # higher identity, then to the aligner's own order.
+                best = max(candidates, key=lambda c: c['rank'])
+                confirmed_hits.append(best['hit'])
+                align_file.write(format_fullseq_alignment_for_output(*best['alignment_args']))
+
+                if debug_mode:
+                    for candidate in candidates:
+                        row = candidate['debug_row']
+                        if candidate is best:
+                            row['status'] = 'Accepted'
+                            row['reason'] = candidate['check_result']['reason']
+                        else:
+                            row['status'] = 'Superseded'
+                            row['reason'] = f"Confirmed, but read assigned to {best['hit']['ARO_matched']}"
+                        row['details'] = candidate['check_result']['details']
+                        debug_writer.writerow(row)
+
     if debug_file: debug_file.close()
     if align_file: align_file.close()
 
