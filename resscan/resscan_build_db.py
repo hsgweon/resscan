@@ -564,12 +564,22 @@ def process_protein_variant_entry(snps, source_map, out_prot_fasta, out_nuc_fast
             ignored_file.write(f"{snps.original_line}\tError: Mutation position out of bounds for {mut.original_token}\n")
             return
 
+        # The reference must carry the stated wild-type residue at the stated
+        # position. An entry that fails this is ignored, never repaired or
+        # guessed at. That includes a reference which already carries the
+        # mutant residue: it may be a sequence from a resistant isolate, but it
+        # is just as readily a numbering offset between the mutation and the
+        # reference, in which case the entry would describe the ordinary
+        # sequence and every wild-type read would be reported as resistant. The
+        # database cannot say which, so the entry is excluded and listed.
         current_prot_check, _ = translate_nucleotide_sequence("".join(current_nuc_list))
         if mut.position > len(current_prot_check) or current_prot_check[mut.position-1] != mut.original_aa:
-            if mut.position > len(current_prot_check) or current_prot_check[mut.position-1] != mut.new_aa:
-                found_aa = current_prot_check[mut.position-1] if mut.position <= len(current_prot_check) else 'End-of-Sequence'
+            found_aa = current_prot_check[mut.position-1] if mut.position <= len(current_prot_check) else 'End-of-Sequence'
+            if found_aa == mut.new_aa:
+                ignored_file.write(f"{snps.original_line}\tError: Reference already carries the mutant residue for {mut.original_token}. Expected wild type '{mut.original_aa}', found '{found_aa}'\n")
+            else:
                 ignored_file.write(f"{snps.original_line}\tError: AA mismatch for {mut.original_token}. Expected '{mut.original_aa}', found '{found_aa}'\n")
-                return
+            return
 
         if mut.new_aa in REVERSE_CODON_TABLE:
             new_codon = REVERSE_CODON_TABLE[mut.new_aa]
@@ -618,8 +628,15 @@ def process_rrna_variant_entry(snps, rrna_map, out_fasta, metadata_file, ignored
             ignored_file.write(f"{snps.original_line}\tError: rRNA Mutation position out of bounds for {mut.original_token}\n")
             return
         
-        if current_nuc_list[mut.position - 1] != mut.original_base and current_nuc_list[mut.position - 1] != mut.new_base:
-            ignored_file.write(f"{snps.original_line}\tError: rRNA Mutation mismatch for {mut.original_token}. Expected '{mut.original_base}', found '{current_nuc_list[mut.position-1]}'\n")
+        # Same rule as for protein models: the reference must carry the stated
+        # wild-type base, and a reference that already carries the mutant base
+        # is excluded rather than assumed to be a resistant sequence.
+        found_base = current_nuc_list[mut.position - 1]
+        if found_base != mut.original_base:
+            if found_base == mut.new_base:
+                ignored_file.write(f"{snps.original_line}\tError: Reference already carries the mutant base for {mut.original_token}. Expected wild type '{mut.original_base}', found '{found_base}'\n")
+            else:
+                ignored_file.write(f"{snps.original_line}\tError: rRNA Mutation mismatch for {mut.original_token}. Expected '{mut.original_base}', found '{found_base}'\n")
             return
         
         current_nuc_list[mut.position - 1] = mut.new_base
