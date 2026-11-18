@@ -1,9 +1,7 @@
 USCG_ID	Avg_Length_aa
 argS	568
-cysS	468
 ffh	468
 ftsY	381
-hisS	434
 leuS	868
 pheS	358
 rplA	230
@@ -19,8 +17,6 @@ rplO	151
 rplP	142
 rplR	126
 rplV	124
-rpoA	333
-rpoB	1209
 rpsB	264
 rpsC	242
 rpsD	202
@@ -37,5 +33,4 @@ rpsS	96
 secY	443
 serS	425
 tsaD	356
-valS	901
 ychF	367

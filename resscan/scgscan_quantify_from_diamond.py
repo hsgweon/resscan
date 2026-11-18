@@ -2,14 +2,15 @@
 
 # resscan/scgscan_quantify_from_diamond.py
 import argparse
+import math
 import os
 import sys
 import re
 from collections import Counter, defaultdict
 try:
-    from resscan.utils import BColors
+    from resscan.utils import BColors, load_effective_length_offset
 except ImportError:
-    from utils import BColors
+    from utils import BColors, load_effective_length_offset
 
 # Marker genes are quantified at protein level, so their reference lengths are
 # in amino acids. The number of reads a gene attracts depends on its physical
@@ -44,16 +45,38 @@ def load_gene_lengths(filepath):
     print(BColors.green(f"--- Loaded lengths for {len(lengths_map)} genes."))
     return lengths_map
 
-def process_diamond_file(diamond_path, evalue_cutoff):
+def required_alignment_length(read_length, min_aln_len, min_aln_frac):
+    """Aligned bases a read must present to count: the same rule as HomScan."""
+    frac_requirement = 0
+    if min_aln_frac > 0 and read_length > 0:
+        frac_requirement = math.ceil(read_length * min_aln_frac)
+    return max(int(min_aln_len), frac_requirement)
+
+
+def process_diamond_file(diamond_path, evalue_cutoff, min_aln_len=0, min_aln_frac=0.0):
     """
     Processes a DIAMOND tabular output file to count hits per reference gene,
     distinguishing between total reads and unique fragments.
+
+    A read counts towards a marker only if the part of it that aligns to the
+    protein (query end - query start + 1, in nucleotides) is at least
+    max(min_aln_len, min_aln_frac x read length). This is the rule HomScan applies
+    to AMR genes. Without it a read overlapping the end of a marker by a few codons
+    is still counted, so markers gather reads over a wider window than AMR genes
+    and the per-cell denominator is inflated.
+
+    The read length is the thirteenth column (qlen). Files written before that
+    column was added have twelve columns; the rule cannot be applied to them and
+    they are counted on the e-value alone.
     """
     print(BColors.cyan(f"--- Processing DIAMOND file: {diamond_path} ---"))
     read_counts = Counter()
     fragments_per_gene = defaultdict(set)
     total_alignments = 0
     passing_alignments = 0
+    too_short = 0
+    rule_requested = min_aln_len > 0 or min_aln_frac > 0
+    rule_unavailable = False
     
     try:
         with open(diamond_path, 'r') as f:
@@ -67,6 +90,15 @@ def process_diamond_file(diamond_path, evalue_cutoff):
                     evalue = float(fields[10])
                     
                     if evalue <= evalue_cutoff:
+                        if rule_requested:
+                            if len(fields) >= 13:
+                                aligned = abs(int(fields[7]) - int(fields[6])) + 1
+                                if aligned < required_alignment_length(int(fields[12]), min_aln_len, min_aln_frac):
+                                    too_short += 1
+                                    continue
+                            else:
+                                rule_unavailable = True
+
                         base_gene_id = full_gene_id.split('___')[0]
                         
                         # Count every passing read
@@ -80,12 +112,27 @@ def process_diamond_file(diamond_path, evalue_cutoff):
 
     except FileNotFoundError:
         print(BColors.red(f"Error: DIAMOND file not found at '{diamond_path}'"), file=sys.stderr)
-        return None, None, 0, 0
-    
-    print(BColors.green(f"--- Processed {total_alignments} alignments. Found {passing_alignments} passing hits for {len(read_counts)} unique genes."))
-    return read_counts, fragments_per_gene, total_alignments, passing_alignments
+        return None, None, 0, 0, 0
 
-def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths, total_alignments):
+    if rule_unavailable:
+        print(BColors.yellow("--- Warning: this DIAMOND file has no read-length column (it was written by an earlier "
+                             "version), so the minimum aligned length could not be applied to marker reads. "
+                             "Re-run the mapping step to apply it. ---"), file=sys.stderr)
+    print(BColors.green(f"--- Processed {total_alignments} alignments. Found {passing_alignments} passing hits for {len(read_counts)} unique genes "
+                        f"({too_short} below the minimum aligned length)."))
+    return read_counts, fragments_per_gene, total_alignments, passing_alignments, too_short
+
+def effective_length_nt(length_aa, eff_len_offset):
+    """
+    Length a marker's read count is divided by: its nucleotide length plus the
+    per-sample effective-length offset, exactly as for AMR genes. The offset is
+    zero under the default --homscan-min-aln-frac 0.5.
+    """
+    return max(1.0, length_aa * NT_PER_AA + eff_len_offset) if length_aa > 0 else 0.0
+
+
+def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths, total_alignments,
+                 eff_len_offset=0.0, reads_too_short=0):
     """Calculates RPK and FPK metrics and writes the final summary report."""
     print(BColors.cyan(f"--- Calculating metrics and writing report to: {output_path} ---"))
     
@@ -94,7 +141,10 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
     total_ref_len = sum(uscg_lengths.values())
 
     # Calculate overall RPK and FPK for all SCGs combined
-    overall_rpk = (total_mapped_reads / (total_ref_len * NT_PER_AA / 1000.0)) if total_ref_len > 0 else 0.0
+    # Reads are divided by the effective length (see effective_length_nt); fragments
+    # by the plain length, as for AMR genes.
+    total_eff_len = sum(effective_length_nt(length, eff_len_offset) for length in uscg_lengths.values())
+    overall_rpk = (total_mapped_reads / (total_eff_len / 1000.0)) if total_eff_len > 0 else 0.0
     overall_fpk = (total_mapped_fragments / (total_ref_len * NT_PER_AA / 1000.0)) if total_ref_len > 0 else 0.0
 
     try:
@@ -107,17 +157,19 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
                 read_count = uscg_read_counts.get(gene_id, 0)
                 fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
                 
-                rpk = (read_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
+                rpk = (read_count / (effective_length_nt(length, eff_len_offset) / 1000.0)) if length > 0 else 0.0
                 fpk = (fragment_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
                 
                 f.write(f"{gene_id}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
 
             f.write("\n### Overall Sample Statistics ###\n")
             f.write(f"Total_Alignments_In_DIAMOND_File\t{total_alignments}\n")
+            f.write(f"Reads_Not_Counted_Aligned_Length_Below_Minimum\t{reads_too_short}\n")
             f.write(f"Total_Reads_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_reads}\n")
             f.write(f"Total_Fragments_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_fragments}\n")
             f.write(f"Total_Reference_USCG_Length_AA_Combined\t{total_ref_len}\n")
             f.write(f"Total_Reference_USCG_Length_NT_Combined\t{total_ref_len * NT_PER_AA}\n")
+            f.write(f"Effective_Length_Offset_NT_Per_Gene\t{eff_len_offset:.4f}\n")
             f.write(f"Overall_RPK_Across_All_USCGs\t{overall_rpk:.4f}\n")
             f.write(f"Overall_FPK_Across_All_USCGs\t{overall_fpk:.4f}\n")
         
@@ -129,7 +181,7 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
 
 
 def write_uscg_table(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths,
-                     overall_rpk, overall_fpk):
+                     overall_rpk, overall_fpk, eff_len_offset=0.0):
     """
     Writes the per-gene USCG table as a plain TSV.
 
@@ -153,7 +205,7 @@ def write_uscg_table(output_path, uscg_read_counts, uscg_fragment_sets, uscg_len
                 length = uscg_lengths[gene_id]
                 read_count = uscg_read_counts.get(gene_id, 0)
                 fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
-                rpk = (read_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
+                rpk = (read_count / (effective_length_nt(length, eff_len_offset) / 1000.0)) if length > 0 else 0.0
                 fpk = (fragment_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
                 f.write(f"{gene_id}\t{length}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
 
@@ -198,8 +250,15 @@ def main():
         default=1e-5,
         help="E-value cutoff for considering an alignment a valid hit. (default: 1e-5)"
     )
+    parser.add_argument("--min-aln-len", type=int, default=40,
+                        help="Minimum aligned length (nucleotides) for a read to count towards a marker. Use the HomScan value. (default: 40)")
+    parser.add_argument("--min-aln-frac", type=float, default=0.5,
+                        help="Minimum fraction of the read that must align to the marker. Use the HomScan value. (default: 0.5)")
+    parser.add_argument("--total-bases-file", default=None,
+                        help="Sequencing metrics file holding the effective-length offset. Without it the offset is taken as zero.")
     args = parser.parse_args()
 
+    eff_len_offset = load_effective_length_offset(args.total_bases_file) if args.total_bases_file else 0.0
     uscg_lengths = load_gene_lengths(args.gene_lengths)
     if uscg_lengths is None:
         sys.exit(1)
@@ -212,9 +271,11 @@ def main():
     aggregated_read_counts = Counter()
     aggregated_fragment_sets = defaultdict(set)
     total_alignments_processed = 0
+    total_too_short = 0
 
     for diamond_file in diamond_files_list:
-        read_counts, fragments_per_gene, alignments_in_file, _ = process_diamond_file(diamond_file, args.evalue)
+        read_counts, fragments_per_gene, alignments_in_file, _, too_short = process_diamond_file(
+            diamond_file, args.evalue, args.min_aln_len, args.min_aln_frac)
         if read_counts is None:
             continue
         
@@ -223,10 +284,11 @@ def main():
             aggregated_fragment_sets[gene].update(frag_set)
             
         total_alignments_processed += alignments_in_file
+        total_too_short += too_short
 
     overall_rpk, overall_fpk = write_report(
         args.output_report, aggregated_read_counts, aggregated_fragment_sets,
-        uscg_lengths, total_alignments_processed)
+        uscg_lengths, total_alignments_processed, eff_len_offset, total_too_short)
 
     table_path = args.output_table
     if table_path is None:
@@ -234,7 +296,7 @@ def main():
         if table_path == args.output_report:
             table_path = args.output_report + ".table.tsv"
     write_uscg_table(table_path, aggregated_read_counts, aggregated_fragment_sets,
-                     uscg_lengths, overall_rpk, overall_fpk)
+                     uscg_lengths, overall_rpk, overall_fpk, eff_len_offset)
     
     print(BColors.green("\n\n--- USCG Quantification from DIAMOND Complete ---"))
 

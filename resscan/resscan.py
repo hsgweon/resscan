@@ -445,6 +445,11 @@ def main():
         scg_map_cmd = [sys.executable, str(src_dir / "scgscan_map_reads_diamond.py"), "-i", input_fastqs_str, "--db", str(db_scg), "--tmp-dir", str(scgscan_tmp), "-t", str(args.threads)]
         if not run_command(scg_map_cmd): sys.exit(1)
 
+        # Sequencing totals first: marker quantification needs the effective-length offset.
+        total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
+        calc_bases_cmd = [sys.executable, str(src_dir / "scgscan_calculate_total_bases.py"), "-i", input_fastqs_str, "-o", str(total_bases_file), "-t", str(args.threads), "--mate-count", str(mate_count), "--min-aln-len", str(args.homscan_min_aln_len), "--min-aln-frac", str(args.homscan_min_aln_frac)]
+        if not run_command(calc_bases_cmd): sys.exit(1)
+
         diamond_outputs = [scgscan_tmp / f"{f.name}.diamond.tsv" for f in fastq_files]
         uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
         uscg_table = scgscan_tmp / f"{output_prefix_name}_uscg.tsv"
@@ -452,15 +457,13 @@ def main():
         valid_diamond_outputs = [str(p) for p in diamond_outputs if file_exists_and_is_not_empty(p)]
 
         if valid_diamond_outputs:
-            scg_quant_cmd = [sys.executable, str(src_dir / "scgscan_quantify_from_diamond.py"), "-i", ",".join(valid_diamond_outputs), "-l", str(db_scg_lengths), "-o", str(uscg_report), "--output-table", str(uscg_table), "-e", "1e-5"]
+            scg_quant_cmd = [sys.executable, str(src_dir / "scgscan_quantify_from_diamond.py"), "-i", ",".join(valid_diamond_outputs), "-l", str(db_scg_lengths), "-o", str(uscg_report), "--output-table", str(uscg_table), "-e", "1e-5",
+                             "--min-aln-len", str(args.homscan_min_aln_len), "--min-aln-frac", str(args.homscan_min_aln_frac),
+                             "--total-bases-file", str(total_bases_file)]
             if not run_command(scg_quant_cmd): sys.exit(1)
         else:
             logging.warning("No valid DIAMOND hits found in any files. Skipping SCG quantification.")
             uscg_report.touch()
-
-        total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
-        calc_bases_cmd = [sys.executable, str(src_dir / "scgscan_calculate_total_bases.py"), "-i", input_fastqs_str, "-o", str(total_bases_file), "-t", str(args.threads), "--mate-count", str(mate_count), "--min-aln-len", str(args.homscan_min_aln_len), "--min-aln-frac", str(args.homscan_min_aln_frac)]
-        if not run_command(calc_bases_cmd): sys.exit(1)
     else:
         if args.skip_to_tabulate:
             print(f"{Colors.WARNING}Skipping mapping and SAM processing as requested by --skip-to-tabulate.{Colors.ENDC}")

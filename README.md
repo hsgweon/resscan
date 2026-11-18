@@ -36,7 +36,7 @@ The pipeline normalises results against universal single-copy genes (USCGs) and 
 -   pandas, numpy
 -   Nextflow ≥ 26.0 — required only for `resscan_batch` (needs Java 11+)
 
-**Hardware and resources.** ResScan's own databases are small — the prepared CARD reference and the packaged 40-gene SCG database are sub-gigabyte — so the core mapping steps (BWA, DIAMOND) are modest in memory, typically a few GB. The largest disk consumer is the per-sample intermediate SAM/BAM files written under the Nextflow `work/` directory; these scale with sequencing depth and can be reclaimed after a run with `--cleanup` (see Post-Run Housekeeping). Runtime scales with the number of reads per sample and the threads allocated (`-t` / `--threads`); the batch wrapper additionally parallelises across samples (`--parallel`). Note that upstream host-read removal (not part of ResScan) is usually the most resource-intensive step — a human `bowtie2` index alone needs several GB of RAM and disk.
+**Hardware and resources.** ResScan's own databases are small — the prepared CARD reference and the packaged 35-gene SCG database are sub-gigabyte — so the core mapping steps (BWA, DIAMOND) are modest in memory, typically a few GB. The largest disk consumer is the per-sample intermediate SAM/BAM files written under the Nextflow `work/` directory; these scale with sequencing depth and can be reclaimed after a run with `--cleanup` (see Post-Run Housekeeping). Runtime scales with the number of reads per sample and the threads allocated (`-t` / `--threads`); the batch wrapper additionally parallelises across samples (`--parallel`). Note that upstream host-read removal (not part of ResScan) is usually the most resource-intensive step — a human `bowtie2` index alone needs several GB of RAM and disk.
 
 ## Installation
 
@@ -248,7 +248,9 @@ The primary metric for interpreting AMR abundance in this pipeline is **RPKPMC**
 | **Coverage_Depth** | Aligned bases in gene / Gene Length | **Mean depth per base.** Reported for reference; the recommended unit when reads are long relative to genes. |
 | **Effective_Length_bp** | Gene Length + per-sample offset | The length RPK is divided by. Equals the gene length under default settings. |
 
-**Single-copy-gene normalisation (the per-cell denominator).** The `RPK_uscg_avg` / `FPK_uscg_avg` term used by the per-cell metrics is the average density of a packaged set of **40 universal single-copy marker genes** — ribosomal proteins, RNA polymerase subunits, aminoacyl-tRNA synthetases, and other core housekeeping genes. Sequences are derived from the **NCBI COG2020** database and quantified at the protein level with **DIAMOND**. Because these genes occur in (almost) exactly one copy per genome across bacteria, their average density approximates the number of bacterial genomes — i.e. cells — in the sample, which is what makes the per-cell metrics biologically interpretable. Marker density is expressed per kilobase of **nucleotide** sequence (three times the protein length), the same unit as AMR gene density, so that a single-copy gene gives an `RPKPC` of about 1. A custom marker set can be supplied via `--db-scg` / `--db-scg-lengths`.
+**Single-copy-gene normalisation (the per-cell denominator).** The `RPK_uscg_avg` / `FPK_uscg_avg` term used by the per-cell metrics is the average density of a packaged set of **35 universal single-copy marker genes** — ribosomal proteins, RNA polymerase subunits, aminoacyl-tRNA synthetases, and other core housekeeping genes. Sequences are derived from the **NCBI COG2020** database and quantified at the protein level with **DIAMOND**. Because these genes occur in (almost) exactly one copy per genome across bacteria, their average density approximates the number of bacterial genomes — i.e. cells — in the sample, which is what makes the per-cell metrics biologically interpretable. Marker density is expressed per kilobase of **nucleotide** sequence (three times the protein length), the same unit as AMR gene density, so that a single-copy gene gives an `RPKPC` of about 1. A custom marker set can be supplied via `--db-scg` / `--db-scg-lengths`.
+
+**How marker reads are counted, and how accurate the denominator is.** A read counts towards a marker under the same rule as for an AMR gene: the part of the read that aligns must be at least `max(--homscan-min-aln-len, --homscan-min-aln-frac × read length)`, i.e. half of the read by default. Marker lengths receive the same effective-length correction as AMR genes. Five of the 40 markers commonly used for this purpose (*rpoA*, *rpoB*, *cysS*, *hisS* and *valS*) are not included, because reads from related genes are counted towards them: reads from *rpoC* match sequences in the *rpoA* and *rpoB* families, cysteine synthase reads match *cysS*, glycine–tRNA ligase reads match *hisS*, and isoleucine–tRNA ligase reads match *valS*. In simulations of 32 genomes from 14 phyla, each sequenced alone so that every single-copy gene has a known density, the marker density reported with all 40 markers and no overlap rule was a median of 14% too high (range 3% to 30%). With the 35 markers and the overlap rule it is a median of 2.6% too high (range 4% too low to 13% too high), and within 5% of the true value for 24 of the 32 genomes. A single-copy gene is therefore reported at about 0.97 copies per cell (range 0.89 to 1.04). The remaining error comes mainly from reads of related genes matching the retained markers, and is largest in high-GC Actinomycetota.
 
 **Effective length (why RPK is not simply reads / gene length).** A read counts towards a gene when at least `m` of its bases align inside it, so it may overhang either boundary. Each read therefore gathers evidence over `L - 2m + r`, not `L`. ResScan divides read-based metrics by this **effective length**, reported per gene as `Effective_Length_bp`. Under the default `--homscan-min-aln-frac 0.5` the offset is zero and the effective length equals the gene length exactly, so no correction is being applied — the counting is unbiased by construction. A non-zero offset appears only when the fraction is disabled or the floor binds, and ResScan prints it at the start of the run.
 
@@ -264,7 +266,7 @@ marker genes, so the per-cell denominator is inspectable rather than implicit:
 | :--- | :--- |
 | `USCG_ID` | Marker gene name |
 | `Gene_Length_AA` | Reference length in amino acids (markers are quantified at protein level) |
-| `Read_Count` / `Fragment_Count` | Reads/fragments assigned to that marker |
+| `Read_Count` / `Fragment_Count` | Reads/fragments assigned to that marker (reads with at least half their length aligned) |
 | `RPK` / `FPK` | Density for that marker per kilobase of nucleotide sequence (3 × `Gene_Length_AA`) |
 
 The final row, **`ALL_USCGs`**, carries the pooled values that are **actually used** as the
@@ -368,7 +370,7 @@ required aligned length = max(--homscan-min-aln-len, --homscan-min-aln-frac x re
 | 60 bp | 40 bp | 67% | counted, slight under-measurement |
 | 39 bp | 40 bp | impossible | **not assignable** |
 
-> **Reads shorter than `--homscan-min-aln-len` can never be assigned to a gene.** They are still counted in the per-cell (USCG) denominator, so leaving the floor above your shortest reads deflates abundance rather than merely losing sensitivity. If your reads are trimmed below 80 bp, lower the floor (e.g. `--homscan-min-aln-len 25`). ResScan prints the number of unassignable reads and the resulting effective-length offset at the start of each run.
+> **Reads shorter than `--homscan-min-aln-len` can never be assigned to a gene.** The same floor applies to marker reads, so such reads are left out of both sides of the per-cell ratio, but they still count towards total bases and reads, so leaving the floor above your shortest reads deflates `RPKG` and `RPKM` and loses sensitivity. If your reads are trimmed below 80 bp, lower the floor (e.g. `--homscan-min-aln-len 25`). ResScan prints the number of unassignable reads and the resulting effective-length offset at the start of each run.
 
 *Using a fixed threshold instead.* Setting `--homscan-min-aln-frac 0` disables the proportional rule, so `--homscan-min-aln-len` alone applies as an absolute cutoff in base pairs. This reintroduces the length-dependent bias described above (a fixed `m` makes the counting window `L - 2m + r`, which differs from `L` unless `m` happens to equal half the read length), so it is offered for reproducing a specific fixed-threshold analysis rather than as a recommended setting.
 
@@ -686,7 +688,9 @@ pytest tests
 
 ## What's New in v1.3.0
 
-**Per-cell metrics are three times larger than in earlier versions.** Marker-gene density used to be expressed per kilobase of amino-acid sequence while AMR gene density was per kilobase of nucleotide sequence, so `RPKPC`, `RPKPMC`, `RPKPGC` and their fragment forms were one third of the intended copies per cell. Marker density is now per kilobase of nucleotide sequence. Values from v1.2.1 or earlier can be converted by multiplying by 3; ratios between samples and between genes are unchanged, as are `RPK`, `RPKG` and `RPKM`. Do not combine per-cell values from different versions without converting them; `resscan_aggregate` warns when samples were produced by different versions.
+**Per-cell metrics are three times larger than in earlier versions.** Marker-gene density used to be expressed per kilobase of amino-acid sequence while AMR gene density was per kilobase of nucleotide sequence, so `RPKPC`, `RPKPMC`, `RPKPGC` and their fragment forms were one third of the intended copies per cell. Marker density is now per kilobase of nucleotide sequence. Values from v1.2.1 or earlier can be converted approximately by multiplying by 3 (see also the next paragraph); `RPK`, `RPKG` and `RPKM` are unchanged. Do not combine per-cell values from different versions without converting them; `resscan_aggregate` warns when samples were produced by different versions.
+
+**The per-cell denominator is more accurate, which raises per-cell values by a further 10% or so.** Five markers that attract reads from related genes (*rpoA*, *rpoB*, *cysS*, *hisS*, *valS*) are no longer used, leaving 35, and a marker read must now have at least half its length aligned, as an AMR read must. On simulated genomes the denominator was a median of 14% too high before these changes and is 2.6% too high after them (see "Single-copy-gene normalisation"). This part of the change depends on the organisms in the sample, so results from earlier versions cannot be converted exactly: re-run them.
 
 Other changes:
 
@@ -696,6 +700,7 @@ Other changes:
 -   **VarScan clipping rule** now matches HomScan: an alignment may be clipped only where it reaches the end of the reference.
 -   **HTML reports:** a sample overview page; depth profiles and a capped read pile on HomScan pages; a per-entry summary, codon evidence and coordinates on VarScan pages; light/dark and print layouts; TSV download. HomScan pages now embed only the reads they show, which reduces their size from tens of megabytes each to typically well under one.
 -   **CARD v4.0.2** is supported and used in the examples.
+-   **Long gene-family names** no longer stop a run: report file names are shortened when a family name exceeds what a file name can hold.
 -   **Unit tests** are included in `tests/`.
 
 ## License

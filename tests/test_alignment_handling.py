@@ -167,3 +167,50 @@ def test_marker_density_is_per_kilobase_of_nucleotides(tmp_path):
     amr_rpk = 90 / (900 / 1000.0)                                # same reads over the same 900 nt
     assert rpk == pytest.approx(amr_rpk)
     assert fpk == pytest.approx(amr_rpk)
+
+
+def _diamond_line(read, gene, qstart, qend, qlen=None, evalue="1e-20"):
+    fields = [read, gene, "100", str((abs(qend - qstart) + 1) // 3), "0", "0", str(qstart), str(qend), "1", "50", evalue, "100"]
+    if qlen is not None:
+        fields.append(str(qlen))
+    return "\t".join(fields)
+
+
+def test_marker_reads_need_half_the_read_aligned(tmp_path):
+    """Markers are counted by the rule used for AMR genes: at least half of the read must align."""
+    hits = tmp_path / "hits.tsv"
+    hits.write_text("\n".join([
+        _diamond_line("r1", "rplB___001", 1, 150, 150),        # whole read
+        _diamond_line("r2", "rplB___001", 150, 76, 150),       # exactly half, reverse frame
+        _diamond_line("r3", "rplB___001", 1, 72, 150),         # 72 of 150 bases: an end overlap
+        _diamond_line("r4", "rplB___001", 1, 45, 60),          # short read, 45 of 60 aligned
+        _diamond_line("r5", "rplB___001", 1, 36, 60),          # above half the read but below the 40-base floor
+        _diamond_line("r6", "rplB___001", 1, 150, 150, evalue="1e-3"),
+    ]) + "\n")
+    counts, _fragments, total, passing, too_short = sq.process_diamond_file(str(hits), 1e-5, 40, 0.5)
+    assert counts["rplB"] == 3 and passing == 3 and too_short == 2 and total == 6
+    counts, *_ = sq.process_diamond_file(str(hits), 1e-5)       # rule off: e-value only
+    assert counts["rplB"] == 5
+
+
+def test_marker_files_without_read_length_are_counted_on_evalue_alone(tmp_path):
+    hits = tmp_path / "old.tsv"
+    hits.write_text(_diamond_line("r1", "rplB___001", 1, 30) + "\n")
+    counts, _fragments, _total, passing, too_short = sq.process_diamond_file(str(hits), 1e-5, 40, 0.5)
+    assert counts["rplB"] == 1 and passing == 1 and too_short == 0
+
+
+def test_marker_density_uses_the_effective_length_offset(tmp_path):
+    report = tmp_path / "report.tsv"
+    rpk, fpk = sq.write_report(str(report), {"geneA": 90}, {"geneA": set(range(90))}, {"geneA": 300}, 90, eff_len_offset=-100.0)
+    assert rpk == pytest.approx(90 / (800 / 1000.0))             # reads: 900 nt - 100
+    assert fpk == pytest.approx(90 / (900 / 1000.0))             # fragments: plain length, as for AMR genes
+
+
+def test_packaged_marker_set():
+    """35 markers; the five that attract reads from related genes are not among them."""
+    db = PKG / "databases" / "resscan_DB_SCG"
+    lengths = [line.split("\t")[0] for line in (db / "SCG_gene_lengths.tsv").read_text().splitlines()[1:] if line.strip()]
+    in_fasta = {line[1:].split("___")[0] for line in open(db / "SCG.fasta") if line.startswith(">")}
+    assert len(lengths) == 35 and set(lengths) == in_fasta
+    assert not {"rpoA", "rpoB", "cysS", "hisS", "valS"} & in_fasta

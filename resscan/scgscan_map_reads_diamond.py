@@ -107,7 +107,8 @@ def main():
             '--query', input_file,
             '--out', output_tsv_path,
             '--max-target-seqs', '1',
-            '--outfmt', '6', 'qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore'
+            '--outfmt', '6', 'qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore',
+            'qlen'      # read length, needed for the minimum aligned length applied to marker reads
         ]
         
         run_command(aligner_cmd, f"Mapping reads for {input_basename} with DIAMOND")
