@@ -1,4 +1,4 @@
-# ResScan v.1.2.1
+# ResScan v.1.3.0
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
@@ -18,7 +18,7 @@ The pipeline normalises results against universal single-copy genes (USCGs) and 
 -   **Robust Normalisation:** Normalises AMR gene abundance using a suite of metrics (RPK, RPKG, RPKPC, FPK, etc.) for well-informed, multi-level sample comparisons.
 -   **Advanced Ambiguity Resolution:** Implements a **Maximum A Posteriori (MAP)** iterative algorithm to statistically resolve ambiguous reads, identifying the most probable gene within a homologous family and reporting the proportion of evidence supporting each candidate.
 -   **Prior-Guided Analysis:** Allows the incorporation of external knowledge (e.g., clinical prevalence data) via a user-provided priors file to improve the accuracy of the MAP resolution.
--   **Interactive Visualisations:** Automatically generates detailed HTML reports for each AMR gene family, showing read coverage, identity, and uniqueness.
+-   **Interactive Visualisations:** Automatically generates a sample overview page linking detailed HTML reports for each AMR gene family, showing read coverage, depth, identity, and uniqueness, and the reads that confirm each resistance mutation.
 -   **Safe & Smart Reruns:** Protects against accidental overwrites and allows for efficient re-analysis by skipping the time-consuming mapping step.
 -   **Batch Processing:** Includes Nextflow-based parallel execution capabilities to process multiple samples simultaneously via a simple samplesheet.
 -   **Result Aggregation:** Provides automated tools to pivot results from multiple samples into wide-format, zero-filled tables for downstream statistical analysis.
@@ -85,19 +85,19 @@ Before running the pipeline, you must download the CARD database and prepare it 
 **1. Download CARD Data**: Download the "Broadstreet" dataset from the [CARD Website](https://card.mcmaster.ca/).
 
 ```bash
-# Example for CARD v4.0.1
-wget https://card.mcmaster.ca/download/0/broadstreet-v4.0.1.tar.bz2
-mkdir -p CARD_raw_v4.0.1
-tar -xvjf broadstreet-v4.0.1.tar.bz2 -C CARD_raw_v4.0.1
+# Example for CARD v4.0.2
+wget https://card.mcmaster.ca/download/0/broadstreet-v4.0.2.tar.bz2
+mkdir -p CARD_raw_v4.0.2
+tar -xvjf broadstreet-v4.0.2.tar.bz2 -C CARD_raw_v4.0.2
 ```
 
 **2. Build the ResScan Database**: Run the builder script, pointing it to the folder where you extracted the files.
 
 ```bash
-resscan_build_db -i CARD_raw_v4.0.1 -d resscan_CARD_v4.0.1
+resscan_build_db -i CARD_raw_v4.0.2 -d resscan_CARD_v4.0.2
 ```
 
-This will create a new directory `resscan_CARD_v4.0.1` containing the formatted FASTA and metadata files required by the pipeline.
+This will create a new directory `resscan_CARD_v4.0.2` containing the formatted FASTA and metadata files required by the pipeline.
 
 
 **3. Audit Ignored Sequences**: The build process automatically filters CARD references that cannot be parsed or contain unsupported mutation types. By default, the tool produces three audit files in the output directory:
@@ -105,6 +105,8 @@ This will create a new directory `resscan_CARD_v4.0.1` containing the formatted 
 - `resscan_DB_CARD_metadata_ignored_non_variant.txt`: Details on failed homolog/knockout models.
 - `resscan_DB_CARD_metadata_ignored_variant.txt`: Log of failed snps.txt entries.
 - `ignored_sequences_report.html`: Interactive HTML report summarising exclusion.
+
+**Entries whose reference disagrees with the stated mutation are ignored.** For every substitution listed in CARD's `snps.txt`, the builder checks that the reference sequence carries the stated wild-type residue (or base, for rRNA) at the stated position before introducing the change. If it does not, the entry is left out and the reason is recorded in `resscan_DB_CARD_metadata_ignored_variant.txt`. This includes entries where the reference already carries the *mutant* state, reported as "Reference already carries the mutant residue" (or "base"). Such an entry would otherwise match ordinary reads from the reference organism and report them as resistance mutations. ResScan does not attempt to correct or re-number these entries; they are simply not used. With CARD v4.0.2 this affects 37 rows of `snps.txt`.
 
 ## Optional: Metadata Curation
 
@@ -127,10 +129,10 @@ NDM,NDM Metallo-beta-lactamase
 ### 2. Run the Curation Tool
 ```bash
 # Backup metadata file just in case!
-cp resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt.backup
+cp resscan_CARD_v4.0.2/resscan_DB_CARD_NR_metadata.txt resscan_CARD_v4.0.2/resscan_DB_CARD_NR_metadata.txt.backup
 
 resscan_curate_metadata \
-    -m resscan_CARD_v4.0.1/resscan_DB_CARD_NR_metadata.txt \
+    -m resscan_CARD_v4.0.2/resscan_DB_CARD_NR_metadata.txt \
     -r scripts/curation_rules.csv
 ```
 
@@ -153,16 +155,16 @@ To check your installation, a small test dataset (four paired-end libraries, 852
 resscan -i test_data/fastq/SRR10842857_1.fastq.gz,test_data/fastq/SRR10842857_2.fastq.gz \
         -o test_run \
         -t 16 \
-        --card resscan_CARD_v4.0.1
+        --card resscan_CARD_v4.0.2
 ```
 
-This creates a directory named `test_run` containing all the results; the HomScan report should list around 90 AMR gene families, and VarScan 5 mutation-conferred determinants.
+This creates a directory named `test_run` containing all the results; the HomScan report should contain 90 rows, and VarScan 4 mutation-conferred determinants. Open `test_run/test_run_index.html` in a browser to explore the results.
 
 `test_data/samplesheet.csv` additionally demonstrates each supported input layout — paired-end, single-end, and either of those split across multiple sequencing runs — and can be run in one go with `resscan_batch`:
 
 ```bash
 resscan_batch --samplesheet test_data/samplesheet.csv \
-              --card resscan_CARD_v4.0.1 \
+              --card resscan_CARD_v4.0.2 \
               --out test_batch_results --parallel 2 --threads 8
 ```
 
@@ -187,7 +189,7 @@ Try instead:
 
 Single-end:
 ```bash
-resscan -i sample.fastq.gz -o sample -t 16 --card resscan_CARD_v4.0.1
+resscan -i sample.fastq.gz -o sample -t 16 --card resscan_CARD_v4.0.2
 ```
 
 Paired-end (one run):
@@ -195,7 +197,7 @@ Paired-end (one run):
 resscan -i sample_R1.fastq.gz,sample_R2.fastq.gz \
         -o sample \
         -t 16 \
-        --card resscan_CARD_v4.0.1
+        --card resscan_CARD_v4.0.2
 ```
 
 Paired-end (multiple runs — mates within each run separated by commas, runs separated by semicolons):
@@ -203,7 +205,7 @@ Paired-end (multiple runs — mates within each run separated by commas, runs se
 resscan -i "run1_R1.fastq.gz,run1_R2.fastq.gz;run2_R1.fastq.gz,run2_R2.fastq.gz" \
         -o sample \
         -t 16 \
-        --card resscan_CARD_v4.0.1
+        --card resscan_CARD_v4.0.2
 ```
 
 All runs must have the same number of mates; ResScan will exit with an error if they differ.
@@ -214,13 +216,14 @@ The `resscan` command executes a series of scripts in a coordinated workflow:
 
 1.  ***Mapping & QC (BWA & Diamond)***: Reads are mapped against CARD (BWA) and Universal Single-Copy Genes (DIAMOND).
 2.  ***Normalisation Scaffolding (scgscan_*)***: USCG abundance is used to calculate average coverage for per-cell normalisation.
-3.  ***VarScan (varscan_*)***: Processes BWA alignments to identify point mutations (SNPs) for rRNA and protein models. Requires all specified mutations for a model to be present on a single read. The pipeline applies a strict confirmation step:
+3.  ***VarScan (varscan_*)***: Processes BWA alignments to identify point mutations (SNPs) for rRNA and protein models. Requires all specified mutations for a model to be present on a single read. Every alignment of a read is examined, not only the one the aligner happens to report as primary, and each read is counted once, for the entry it supports best (highest alignment score, then the most mutations confirmed, then identity). The pipeline applies a strict confirmation step:
     -   **Point Mutations Only:** Currently, VarScan detects single nucleotide polymorphisms (SNPs) for rRNA models and amino acid substitutions for protein models. **Frameshifts, deletions, and insertions are not yet implemented.**
     -   **Multi-Mutation Requirement:** If a resistance model defined by CARD requires multiple mutations (e.g., "Mutation A AND Mutation B"), VarScan requires *all* specified mutations to be present on a **single read**. If a read covers Mutation A but ends before reaching Mutation B, it is not counted. *Note: Using short-read data, this requirement is not always achievable if mutations are distant.*
     -   Confirmed variant hits are tabulated, normalised, and visualisations are generated showing the alignment and specific mutation sites.
 4.  ***HomScan (homscan_*)***: The BWA alignments are processed again, this time to identify any read that maps to a homology-type AMR gene above a specified identity cutoff.
     -   **Tabulation, Normalisation & MAP Resolution:** All passing hits are aggregated. This step produces two reports: a `_homscan_detailed.tsv` showing each distinct ambiguous mapping pattern explicitly, and a `_homscan.tsv` where the MAP solver has been applied. The MAP solver uses an iterative algorithm to distribute the abundance from ambiguous reads among candidate genes based on the evidence from uniquely mapped reads and optional user-provided priors. The result is reported as `Top_ARO` and `Allocation_Proportions` columns directly in `_homscan.tsv`.
 5.  ***Consolidation***: The final summary tables from all steps are copied from the temporary directory into the main output directory for easy access.
+6.  ***Sample overview***: `[prefix]_index.html` is written, listing every result and linking the per-family HTML reports (see [HTML Reports](#html-reports)).
 
 ### Understanding the Normalisation Metrics
 
@@ -245,7 +248,7 @@ The primary metric for interpreting AMR abundance in this pipeline is **RPKPMC**
 | **Coverage_Depth** | Aligned bases in gene / Gene Length | **Mean depth per base.** Reported for reference; the recommended unit when reads are long relative to genes. |
 | **Effective_Length_bp** | Gene Length + per-sample offset | The length RPK is divided by. Equals the gene length under default settings. |
 
-**Single-copy-gene normalisation (the per-cell denominator).** The `RPK_uscg_avg` / `FPK_uscg_avg` term used by the per-cell metrics is the average density of a packaged set of **40 universal single-copy marker genes** — ribosomal proteins, RNA polymerase subunits, aminoacyl-tRNA synthetases, and other core housekeeping genes. Sequences are derived from the **NCBI COG2020** database and quantified at the protein level with **DIAMOND**. Because these genes occur in (almost) exactly one copy per genome across bacteria, their average density approximates the number of bacterial genomes — i.e. cells — in the sample, which is what makes the per-cell metrics biologically interpretable. A custom marker set can be supplied via `--db-scg` / `--db-scg-lengths`.
+**Single-copy-gene normalisation (the per-cell denominator).** The `RPK_uscg_avg` / `FPK_uscg_avg` term used by the per-cell metrics is the average density of a packaged set of **40 universal single-copy marker genes** — ribosomal proteins, RNA polymerase subunits, aminoacyl-tRNA synthetases, and other core housekeeping genes. Sequences are derived from the **NCBI COG2020** database and quantified at the protein level with **DIAMOND**. Because these genes occur in (almost) exactly one copy per genome across bacteria, their average density approximates the number of bacterial genomes — i.e. cells — in the sample, which is what makes the per-cell metrics biologically interpretable. Marker density is expressed per kilobase of **nucleotide** sequence (three times the protein length), the same unit as AMR gene density, so that a single-copy gene gives an `RPKPC` of about 1. A custom marker set can be supplied via `--db-scg` / `--db-scg-lengths`.
 
 **Effective length (why RPK is not simply reads / gene length).** A read counts towards a gene when at least `m` of its bases align inside it, so it may overhang either boundary. Each read therefore gathers evidence over `L - 2m + r`, not `L`. ResScan divides read-based metrics by this **effective length**, reported per gene as `Effective_Length_bp`. Under the default `--homscan-min-aln-frac 0.5` the offset is zero and the effective length equals the gene length exactly, so no correction is being applied — the counting is unbiased by construction. A non-zero offset appears only when the fraction is disabled or the floor binds, and ResScan prints it at the start of the run.
 
@@ -262,7 +265,7 @@ marker genes, so the per-cell denominator is inspectable rather than implicit:
 | `USCG_ID` | Marker gene name |
 | `Gene_Length_AA` | Reference length in amino acids (markers are quantified at protein level) |
 | `Read_Count` / `Fragment_Count` | Reads/fragments assigned to that marker |
-| `RPK` / `FPK` | Per-kilobase density for that marker |
+| `RPK` / `FPK` | Density for that marker per kilobase of nucleotide sequence (3 × `Gene_Length_AA`) |
 
 The final row, **`ALL_USCGs`**, carries the pooled values that are **actually used** as the
 per-cell denominator — its `RPK` is exactly the `Overall_RPK_Across_All_USCGs` by which every
@@ -287,6 +290,8 @@ The most challenging aspect of quantifying AMR genes from metagenomes is handlin
 ResScan's ***Maximum A Posteriori (MAP)*** resolver offers a statistical solution to this problem by determining which gene is the most likely source of the ambiguous reads using an iterative expectation-maximisation-like algorithm.
 
 **A note on `--map-metric-column`.** The resolver distributes each ambiguous read across its candidate genes *in proportion* to their current abundance estimates. Because the allocation is proportional, any **per-sample** scaling factor cancels out — so the depth- and cell-normalised metrics (`…G`, `…M`, `…PC`, `…PMC`) all give **identical** MAP results as their per-kilobase base (`RPK` or `FPK`). In practice the choice of column therefore only selects **read- vs fragment-based** counting (which differ by each gene's reads-per-fragment ratio) and **per-kilobase vs raw** counting. The default `RPKPMC` is read-based and per-kilobase, matching the pipeline's signature metric.
+
+**A note on the scale of the priors.** The priors are added to the abundance estimates in the units of the metric column: each weight in the priors file contributes `weight × --map-prior-strength × 0.1`, and the baseline contributes `--map-base-prior × 0.000001`. Their influence therefore depends on how large the values in that column are. With the default `RPKPMC`, abundances are typically in the thousands or more, so a prior only decides between candidates that have little or no unique evidence of their own.
 
 ### Incorporating External Knowledge with Priors
 Sometimes, the evidence from unique reads is sparse. The MAP resolver can be guided by external knowledge using a priors file.
@@ -392,7 +397,7 @@ required aligned length = max(--homscan-min-aln-len, --homscan-min-aln-frac x re
 resscan -i sample.fastq.gz \
         -o SampleA_results \
         -t 32 \
-        --card ./resscan_CARD_v4.0.1
+        --card ./resscan_CARD_v4.0.2
 ```
 
 **2. Standard paired-end analysis**
@@ -400,7 +405,7 @@ resscan -i sample.fastq.gz \
 resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
         -o SampleA_results \
         -t 32 \
-        --card ./resscan_CARD_v4.0.1
+        --card ./resscan_CARD_v4.0.2
 ```
 
 **3. Paired-end analysis with multiple sequencing runs from the same sample**
@@ -410,7 +415,7 @@ Mates within each run are comma-separated; runs are semicolon-separated.
 resscan -i "run1_R1.fastq.gz,run1_R2.fastq.gz;run2_R1.fastq.gz,run2_R2.fastq.gz" \
         -o SampleA_results \
         -t 32 \
-        --card ./resscan_CARD_v4.0.1
+        --card ./resscan_CARD_v4.0.2
 ```
 
 **4. Paired-end analysis with MAP priors**
@@ -418,7 +423,7 @@ resscan -i "run1_R1.fastq.gz,run1_R2.fastq.gz;run2_R1.fastq.gz,run2_R2.fastq.gz"
 resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
         -o SampleA_results \
         -t 32 \
-        --card ./resscan_CARD_v4.0.1 \
+        --card ./resscan_CARD_v4.0.2 \
         --map-priors-file /path/to/clinical_priors.tsv
 ```
 
@@ -426,7 +431,7 @@ resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
 ```bash
 resscan -i sampleA_R1.fastq.gz,sampleA_R2.fastq.gz \
         -o SampleA_results \
-        --card ./resscan_CARD_v4.0.1 \
+        --card ./resscan_CARD_v4.0.2 \
         --map-priors-file /path/to/clinical_priors.tsv \
         --skip-to-tabulate \
         --overwrite
@@ -443,11 +448,11 @@ command line, the aligner versions, the reference database identity, and the ana
 parameters that affect the numbers:
 
 ```
-ResScan_Version              1.2.0
+ResScan_Version              1.3.0
 Run_Date                     2026-08-15 09:13:45
-Command_Line                 resscan -i sample_R1.fq.gz,sample_R2.fq.gz -o sample --card resscan_CARD_v4.0.1
+Command_Line                 resscan -i sample_R1.fq.gz,sample_R2.fq.gz -o sample --card resscan_CARD_v4.0.2
 BWA_Version                  0.7.19-r1273
-Database_CARD_Version        4.0.1
+Database_CARD_Version        4.0.2
 Database_Reference_FASTA_MD5 f4db66b28d45b6cab4a0c57fb95f0174
 Param_homscan_min_aln_frac   0.5
 Param_homscan_pid_cutoff     0.95
@@ -480,7 +485,7 @@ they disagree**:
 
 ```
   WARNING: samples were not all produced the same way.
-    Database_CARD_Version: MIXED: 3.2.9; 4.0.1
+    Database_CARD_Version: MIXED: 3.2.9; 4.0.2
     Aggregated values may not be comparable across these samples.
 ```
 
@@ -496,11 +501,30 @@ single-copy-marker table whose `ALL_USCGs` row is the per-cell normalisation den
 | `[prefix]_homscan.tsv` | ***(Primary Homology Result)*** The homology-based quantitative report. One row per gene (ARO) or per gene family (`multiple` rows for ambiguous reads). Includes all normalised metrics, inline annotation (ARO_Name, Drug_Class, Resistance_Mechanism), and MAP resolution columns (`Top_ARO`, `Allocation_Proportions`). |
 | `[prefix]_homscan_detailed.tsv` | ***(Detailed Homology Report)*** The same data before ambiguous rows are collapsed, showing each distinct `multiple[ARO_x\|ARO_y]` combination explicitly. Includes gene length and all normalised metrics with inline annotation. |
 | `[prefix]_varscan.tsv` | ***(Primary Variant Result)*** The final, normalised summary table for confirmed resistance variant detection, with inline annotation. |
-| `[prefix]_homscan_html/` | Directory containing interactive HTML coverage plots. |
-| `[prefix]_varscan_html/` | Directory containing HTML alignment views. |
+| `[prefix]_index.html` | ***(Start here)*** Sample overview page: summary figures, sortable tables of the HomScan and VarScan results with links to the pages below, the marker-gene table and the run provenance. |
+| `[prefix]_homscan_html/` | Directory containing one interactive HTML coverage page per gene family. |
+| `[prefix]_varscan_html/` | Directory containing one HTML page per gene family showing the reads that confirm each mutation. |
 | `logs/` | Run logs. |
 | `tmp/` | Intermediate files. |
 
+
+## HTML Reports
+
+Every run writes a set of self-contained HTML pages. They need no internet connection and can be archived or shared with the results. Open `[prefix]_index.html` first; the other pages are reached from it.
+
+**Sample overview (`[prefix]_index.html`).** Summary figures for the sample, then one table for HomScan and one for VarScan. The tables can be sorted by clicking a column heading and filtered by typing in the search box. Rows that represent a group of genes the reads cannot tell apart name the most likely member and list the others on hover. The marker-gene table and the provenance record are at the bottom of the page.
+
+**HomScan pages (`[prefix]_homscan_html/`).** One page per gene family, with a section for each reference that received reads:
+
+-   A **depth profile** along the reference and the **lateral coverage** and mean depth, all computed from every read that matches the reference.
+-   A **read pile**, one bar per read, coloured by identity; outlined bars are reads that match this reference and no other. Hover over a read for its identity and click it to list the references it matched. At most 500 reads are drawn per reference (fewer on pages with very many references, so that a page stays within about 20,000 reads); the label above each pile states how many are shown. The statistics are not affected by this limit.
+-   A card showing how the reference appears **in the final table**: its own row, for reads that point to it alone, and any group rows it shares with references the reads cannot tell apart.
+
+"Reads mapped" and the coverage on these pages count every read matching a reference, so they can be larger than the values in `[prefix]_homscan_detailed.tsv`, where each read is counted in one row only.
+
+**VarScan pages (`[prefix]_varscan_html/`).** One page per gene family. A summary table gives, for each database entry, the number of supporting reads and fragments, their mean identity, and what the reads carry at each mutation site (for example `E350Q: CAA (Q) × 314`). Below it, every supporting read is shown aligned to the reference with the mutation site marked and any other differences highlighted. Reads are shown with 10 flanking bases and a coordinate ruler; "Show full reference" places them in the whole reference. Only reads that carry every mutation of an entry are listed; reads that cover a site without the mutation are not shown.
+
+All pages have a light/dark switch, a print layout and a "Download TSV" button for the data behind the page.
 
 ## Batch Processing and Aggregation
 
@@ -572,7 +596,7 @@ Pig, /abs/rawdata/SRR8830792_1.fastq.gz,/abs/rawdata/SRR8830792_2.fastq.gz
 # Run 15 samples in parallel, using 8 threads per sample
 ./resscan_batch \
     --samplesheet data/samplesheet.csv \
-    --card resscan_CARD_v4.0.1 \
+    --card resscan_CARD_v4.0.2 \
     --out project_results \
     --parallel 15 \
     --threads 8
@@ -641,13 +665,38 @@ For massive-scale datasets (thousands of samples) or execution on High-Performan
 ResScan's variant detection (VarScan) is deliberately conservative. Two constraints should be borne in mind when interpreting results:
 
 -   **Substitution variants only.** VarScan reports resistance conferred by nucleotide and amino-acid substitutions. AROs whose CARD model requires a frameshift, insertion, deletion, or duplication are skipped (and reported during the run, e.g. "Skipped N AROs containing complex mutations"). Such determinants will not appear in the output.
--   **Single-read allelic phasing.** For multi-residue models, VarScan requires *all* constituent mutations to be present on a single read alignment. This guarantees physical linkage and removes false "inferred resistance" arising when mutations are distributed across different molecules — but it also means that, with short reads, mutations separated by more than the read length cannot be co-confirmed and may be missed. VarScan favours specificity over sensitivity by design. (In paired-end data each mate is a separate alignment, so the required mutations must co-occur within a single mate.)
+-   **Single-read allelic phasing.** For multi-residue models, VarScan requires *all* constituent mutations to be present on a single read alignment. This guarantees physical linkage and removes false "inferred resistance" arising when mutations are distributed across different molecules — but it also means that, with short reads, mutations separated by more than the read length cannot be co-confirmed and may be missed. VarScan favours specificity over sensitivity by design. (In paired-end data each mate is a separate alignment, so the required mutations must co-occur within a single mate.) In CARD v4.0.2, 26 of the 70 point-mutation models that require more than one mutation span more than 150 nucleotides and therefore cannot be confirmed with 150 bp reads.
+-   **rRNA mutations are counted per read, not per cell.** Ribosomal RNA operons are present in several copies per genome and are highly conserved between species, so a read confirming an rRNA mutation cannot be assigned to a particular organism, and its per-cell value is not a number of resistant cells. The organism in an rRNA entry's name is the one in which CARD describes the mutation, not necessarily the source of the read.
+-   **Database entries are used as given or not at all.** Entries of `snps.txt` whose reference sequence does not carry the stated wild-type residue are ignored (see Database Preparation), so the corresponding determinants are not reported.
 
 A third constraint applies to HomScan abundance:
 
 -   **Fragment-based metrics cannot be length-corrected.** A fragment's effective length depends on the DNA insert-length distribution of the library, which is not recorded in any output file and cannot be recovered from alignments against a reference gene database. Read-based metrics are corrected because their effective length follows from the read length and the alignment threshold, both of which are known. Fragment-based metrics should therefore not be used to compare different genes with one another, or to compare abundances against another study.
 
 These are intentional trade-offs in favour of precision; the per-variant HTML evidence reports let any borderline call be inspected directly.
+
+## Testing
+
+The repository includes unit tests for the alignment-handling rules and the HTML reports. They need `pytest` and run in under a second:
+
+```bash
+pip install pytest
+pytest tests
+```
+
+## What's New in v1.3.0
+
+**Per-cell metrics are three times larger than in earlier versions.** Marker-gene density used to be expressed per kilobase of amino-acid sequence while AMR gene density was per kilobase of nucleotide sequence, so `RPKPC`, `RPKPMC`, `RPKPGC` and their fragment forms were one third of the intended copies per cell. Marker density is now per kilobase of nucleotide sequence. Values from v1.2.1 or earlier can be converted by multiplying by 3; ratios between samples and between genes are unchanged, as are `RPK`, `RPKG` and `RPKM`. Do not combine per-cell values from different versions without converting them; `resscan_aggregate` warns when samples were produced by different versions.
+
+Other changes:
+
+-   **VarScan examines every alignment of a read** and counts each read once, for the entry it supports best. Previously only the primary alignment was examined, so a read could be missed when the aligner reported an equally good alignment to a different entry as primary.
+-   **HomScan reads the sequence of a read from its primary alignment record**, re-orienting it when a further alignment is on the other strand. Reads whose first record was a secondary or hard-clipped alignment are now evaluated correctly; on real data this recovers about 3% more reads, mostly in genes carried on integrons and transposons, and no previously detected read is lost.
+-   **The database builder ignores entries whose reference does not carry the stated wild-type residue**, including those where it already carries the mutant state (see Database Preparation). Databases should be rebuilt with this version.
+-   **VarScan clipping rule** now matches HomScan: an alignment may be clipped only where it reaches the end of the reference.
+-   **HTML reports:** a sample overview page; depth profiles and a capped read pile on HomScan pages; a per-entry summary, codon evidence and coordinates on VarScan pages; light/dark and print layouts; TSV download. HomScan pages now embed only the reads they show, which reduces their size from tens of megabytes each to typically well under one.
+-   **CARD v4.0.2** is supported and used in the examples.
+-   **Unit tests** are included in `tests/`.
 
 ## License
 This project is licensed under the MIT License.

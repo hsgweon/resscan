@@ -40,14 +40,14 @@ From the repository root, with a prepared CARD database (see the main README):
 
 ```bash
 resscan -i test_data/fastq/SRR10842857_1.fastq.gz,test_data/fastq/SRR10842857_2.fastq.gz \
-        -o test_results --card /path/to/resscan_CARD_v4.0.1 -t 4
+        -o test_results --card /path/to/resscan_CARD_v4.0.2 -t 4
 ```
 
 Or run the whole samplesheet, which exercises all four input layouts at once:
 
 ```bash
 resscan_batch --samplesheet test_data/samplesheet.csv \
-              --card /path/to/resscan_CARD_v4.0.1 \
+              --card /path/to/resscan_CARD_v4.0.2 \
               --out test_batch_results --parallel 2 --threads 4
 ```
 
@@ -70,12 +70,14 @@ runs within one sample is rejected with an error.
 ## Expected outcome
 
 The run should complete without errors and produce a non-empty `*_homscan.tsv`
-together with per-cell (`RPKPMC`) values. Observed on this dataset with CARD v4.0.1:
+together with per-cell (`RPKPMC`) values. Observed on this dataset with CARD v4.0.2:
 
-| Entry | HomScan families | VarScan rows |
+| Entry | HomScan rows | VarScan rows |
 | :--- | ---: | ---: |
-| `TEST_PE` (SRR10842857, paired-end) | 90 | 5 |
-| `TEST_SE` (SRR10842855, single-end) | 55 | 2 |
+| `TEST_PE` (SRR10842857, paired-end) | 90 | 4 |
+| `TEST_SE` (SRR10842855, single-end) | 56 | 1 |
+| `TEST_PE_MULTIRUN` (SRR10842841 + SRR10842842) | 109 | 6 |
+| `TEST_SE_MULTIRUN` (SRR10842855 + SRR10842857, first mates) | 96 | 3 |
 
 The VarScan calls are real determinants — *Escherichia coli* UhpT mutations conferring
 fosfomycin resistance (105 supporting reads in `TEST_PE`), plus 16S and 23S rRNA

@@ -20,7 +20,7 @@ try:
 except ImportError:
     from utils import BColors as Colors, describe_database
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter to add colours to log messages for console output."""
@@ -527,7 +527,9 @@ def main():
                 sys.executable, str(src_dir / "homscan_visualise.py"), "-i", ",".join(valid_hits_files),
                 "--metadata", str(db_card_metadata), "--db", str(db_card),
                 "-o", str(homscan_html_dir), "--pid-cutoff", str(args.homscan_pid_cutoff),
-                "--pid-type", args.homscan_pid_type
+                "--pid-type", args.homscan_pid_type,
+                "--summary-table", str(homscan_tmp / f"{output_prefix_name}_homscan.tsv"),
+                "--sample-name", output_prefix_name, "--index-href", f"../{output_prefix_name}_index.html"
             ]
             if not run_command(homscan_visualise_cmd): sys.exit(1)
     else:
@@ -569,7 +571,8 @@ def main():
                     sys.executable, str(src_dir / "varscan_visualise.py"), "--variant-hits", str(variant_hits),
                     "--variant-alignments", str(variant_alignments), "--metadata", str(db_card_metadata),
                     "-o", str(varscan_html_dir),
-                    "--pid-cutoff", str(args.varscan_pid_cutoff)
+                    "--pid-cutoff", str(args.varscan_pid_cutoff),
+                    "--sample-name", output_prefix_name, "--index-href", f"../{output_prefix_name}_index.html"
                 ]
                 if not run_command(varscan_visualise_cmd): sys.exit(1)
             else:
@@ -584,6 +587,10 @@ def main():
     log_boxed_header("Final Report Consolidation", Colors.BLUE)
     final_cmd = [sys.executable, str(src_dir / "resscan_consolidate_all.py"), "--output-prefix", str(output_prefix_path)]
     if not run_command(final_cmd): sys.exit(1)
+
+    # One overview page per sample, linking the per-family HomScan and VarScan pages.
+    index_cmd = [sys.executable, str(src_dir / "resscan_report_index.py"), "--output-prefix", str(output_prefix_path), "--metadata", str(db_card_metadata)]
+    if not run_command(index_cmd): sys.exit(1)
 
     end_time = time.monotonic()
     duration_seconds = end_time - start_time
@@ -601,6 +608,7 @@ def main():
                 print(f"  - {f}")
     
     summarize_files("Final Summary Tables", main_output_dir, f"{output_prefix_name}_*.tsv")
+    summarize_files("Sample Overview (open this first)", main_output_dir, f"{output_prefix_name}_index.html")
     if not args.skip_to_tabulate:
         summarize_files("HomScan Visualisations", homscan_html_dir, "*.html")
         summarize_files("VarScan Visualisations", varscan_html_dir, "*.html")
