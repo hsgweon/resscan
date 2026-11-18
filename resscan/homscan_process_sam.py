@@ -33,6 +33,11 @@ def translate_codon(codon):
         return 'X'
     return CODON_TABLE.get(codon.upper(), 'X')
 
+_COMPLEMENT = str.maketrans('ACGTNacgtn', 'TGCANtgcan')
+
+def reverse_complement(seq):
+    return seq.translate(_COMPLEMENT)[::-1]
+
 def calculate_protein_metrics(cigar, pos, query_seq, ref_nuc_seq):
     """
     Calculates protein PID, mismatches, and the denominator (codons compared).
@@ -198,9 +203,18 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, m
                 original_qname = fields[0]
                 suffixed_qname = f"{original_qname}_{file_idx}"
                 seq = fields[9]
-                if seq != '*':
-                    query_sequences[suffixed_qname] = seq
-            except IndexError: continue
+                if seq == '*': continue
+                flag = int(fields[1])
+                # Only the primary record carries the complete read: secondary
+                # records hold '*', and supplementary records are hard-clipped
+                # and written after the primary, so letting them in would
+                # replace the full read with a fragment of it. The strand is
+                # kept because SEQ is stored on the forward reference strand.
+                if not (flag & 0x900):
+                    query_sequences[suffixed_qname] = (seq, bool(flag & 0x10))
+                elif suffixed_qname not in query_sequences and 'H' not in fields[5]:
+                    query_sequences[suffixed_qname] = (seq, bool(flag & 0x10))
+            except (IndexError, ValueError): continue
 
     input_basename = os.path.basename(sam_path)
     hits_path = os.path.join(tmp_dir, f"{input_basename}_hits.tsv")
@@ -217,8 +231,13 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, m
                 original_qname = fields[0]
                 suffixed_qname = f"{original_qname}_{file_idx}"
                 
-                actual_seq = query_sequences.get(suffixed_qname)
-                if not actual_seq: continue
+                cached = query_sequences.get(suffixed_qname)
+                if not cached: continue
+                # An alignment on the opposite strand to the cached record needs
+                # the read reverse-complemented before codons can be compared.
+                actual_seq, cached_is_reverse = cached
+                if bool(int(fields[1]) & 0x10) != cached_is_reverse:
+                    actual_seq = reverse_complement(actual_seq)
 
                 rname = fields[2]
                 if rname == '*': continue
