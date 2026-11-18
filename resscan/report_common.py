@@ -8,16 +8,27 @@ theme, the page header, sortable tables and the "download as TSV" helper.
 Every report is a single self-contained file. Nothing is fetched from the
 network, so the pages open offline and can be archived with the results.
 """
+import hashlib
 import html
 import json
 import re
 
 
+# File systems limit a file name to 255 bytes. A family name can be longer than that
+# when CARD annotates an entry with many families at once.
+MAX_FILENAME_STEM = 120
+
 def sanitize_filename(name):
-    """Converts a family name into the file name used for its report page."""
-    name = name.replace(' ', '_').replace(';', '_').replace('/', '_')
-    name = re.sub(r'[^\w\-.]', '', name)
-    return name.lower() + ".html"
+    """
+    Converts a family name into the file name used for its report page. Names too
+    long for a file name are cut short and given a suffix derived from the full name,
+    so that different families never share a file.
+    """
+    stem = name.replace(' ', '_').replace(';', '_').replace('/', '_')
+    stem = re.sub(r'[^\w\-.]', '', stem).lower()
+    if len(stem) > MAX_FILENAME_STEM:
+        stem = stem[:MAX_FILENAME_STEM] + "_" + hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
+    return stem + ".html"
 
 
 # Colours are CSS variables so that one switch changes the whole page. The dark

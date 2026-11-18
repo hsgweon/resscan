@@ -125,3 +125,12 @@ def test_index_page_links_only_to_pages_that_exist(tmp_path):
     assert '<a href="s_homscan_html/family_a.html">family A</a>' in page
     assert "family_b.html" not in page                    # no page on disk, so no link
     assert "geneB" in page and "group of 2" in page and "x; y" in page
+
+
+def test_long_family_names_give_short_distinct_file_names():
+    from resscan.report_common import sanitize_filename
+    assert sanitize_filename("TEM beta-lactamase") == "tem_beta-lactamase.html"
+    long_a = ";".join(["antibiotic efflux regulatory protein"] * 12) + ";variant A"
+    long_b = ";".join(["antibiotic efflux regulatory protein"] * 12) + ";variant B"
+    assert len(sanitize_filename(long_a).encode()) < 255
+    assert sanitize_filename(long_a) != sanitize_filename(long_b)
