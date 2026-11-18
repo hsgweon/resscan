@@ -11,6 +11,14 @@ try:
 except ImportError:
     from utils import BColors
 
+# Marker genes are quantified at protein level, so their reference lengths are
+# in amino acids. The number of reads a gene attracts depends on its physical
+# length in nucleotides, and AMR densities are per kilobase of nucleotides, so
+# marker densities must be expressed per kilobase of nucleotides as well.
+# Dividing by the amino-acid length instead inflates the marker density
+# threefold and deflates every per-cell metric by the same factor.
+NT_PER_AA = 3
+
 def load_gene_lengths(filepath):
     """Loads a two-column TSV file (gene_id, length) into a dictionary."""
     print(BColors.cyan(f"--- Loading gene lengths from: {filepath} ---"))
@@ -86,8 +94,8 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
     total_ref_len = sum(uscg_lengths.values())
 
     # Calculate overall RPK and FPK for all SCGs combined
-    overall_rpk = (total_mapped_reads / (total_ref_len / 1000.0)) if total_ref_len > 0 else 0.0
-    overall_fpk = (total_mapped_fragments / (total_ref_len / 1000.0)) if total_ref_len > 0 else 0.0
+    overall_rpk = (total_mapped_reads / (total_ref_len * NT_PER_AA / 1000.0)) if total_ref_len > 0 else 0.0
+    overall_fpk = (total_mapped_fragments / (total_ref_len * NT_PER_AA / 1000.0)) if total_ref_len > 0 else 0.0
 
     try:
         with open(output_path, 'w') as f:
@@ -99,8 +107,8 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
                 read_count = uscg_read_counts.get(gene_id, 0)
                 fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
                 
-                rpk = (read_count / (length / 1000.0)) if length > 0 else 0.0
-                fpk = (fragment_count / (length / 1000.0)) if length > 0 else 0.0
+                rpk = (read_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
+                fpk = (fragment_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
                 
                 f.write(f"{gene_id}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
 
@@ -109,6 +117,7 @@ def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths
             f.write(f"Total_Reads_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_reads}\n")
             f.write(f"Total_Fragments_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_fragments}\n")
             f.write(f"Total_Reference_USCG_Length_AA_Combined\t{total_ref_len}\n")
+            f.write(f"Total_Reference_USCG_Length_NT_Combined\t{total_ref_len * NT_PER_AA}\n")
             f.write(f"Overall_RPK_Across_All_USCGs\t{overall_rpk:.4f}\n")
             f.write(f"Overall_FPK_Across_All_USCGs\t{overall_fpk:.4f}\n")
         
@@ -128,7 +137,9 @@ def write_uscg_table(output_path, uscg_read_counts, uscg_fragment_sets, uscg_len
     values that are actually used as the per-cell denominator. The pooled RPK is
     total mapped reads divided by the combined reference length, which is not the
     same as the mean of the per-gene RPKs: genes are weighted by their length.
-    Lengths are amino acids, since the markers are quantified at protein level.
+    Lengths are listed in amino acids, since the markers are quantified at protein
+    level; RPK and FPK are per kilobase of nucleotides (amino acids x 3), the same
+    unit as the AMR gene densities they normalise.
     """
     print(BColors.cyan(f"--- Writing USCG table to: {output_path} ---"))
     total_mapped_reads = sum(uscg_read_counts.values())
@@ -142,8 +153,8 @@ def write_uscg_table(output_path, uscg_read_counts, uscg_fragment_sets, uscg_len
                 length = uscg_lengths[gene_id]
                 read_count = uscg_read_counts.get(gene_id, 0)
                 fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
-                rpk = (read_count / (length / 1000.0)) if length > 0 else 0.0
-                fpk = (fragment_count / (length / 1000.0)) if length > 0 else 0.0
+                rpk = (read_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
+                fpk = (fragment_count / (length * NT_PER_AA / 1000.0)) if length > 0 else 0.0
                 f.write(f"{gene_id}\t{length}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
 
             f.write(f"ALL_USCGs\t{total_ref_len}\t{total_mapped_reads}\t{total_mapped_fragments}"
